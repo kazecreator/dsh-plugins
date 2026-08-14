@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.2.1 — 2026-08-14
 
 - `/restart` now sends exactly one acknowledgement in the conversation's language
   and a proactive "restart complete" message once the requesting peer's channel
