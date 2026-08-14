@@ -8,28 +8,10 @@ import { createUserMessage } from "@deepseek-ai/dsh-llm";
 import { SessionId } from "@deepseek-ai/dsh-session";
 import { parseCommand } from "./commands.js";
 import { parseAnswer, renderQuestion } from "./questions.js";
+import { detectLanguage, t } from "./i18n.js";
 
 const DEFAULT_REPLY_TIMEOUT_MS = 120000;
 const CANCEL_SETTLE_TIMEOUT_MS = 5000;
-
-const TIMEOUT_FALLBACK = "⏳ The agent timed out, so I stopped the task. Send it again or let me retry another way.";
-
-/** Human-friendly activity labels for common tools; anything else falls back to the raw name. */
-const ACTIVITY_LABELS = {
-  bash: "Running command",
-  read: "Reading file",
-  grep: "Searching code",
-  glob: "Finding files",
-  edit: "Editing file",
-  write: "Writing file",
-  web_search: "Searching the web",
-  ask_user_question: "Awaiting confirmation",
-  todo_write: "Updating task list",
-};
-
-function activityLabel(name) {
-  return ACTIVITY_LABELS[name] ?? name;
-}
 
 /** Remove DSH's `<invoke>`/`<function_calls>` text fallback, which some models emit when tools are unavailable. */
 function stripFakeToolCallMarkup(text) {
@@ -139,6 +121,7 @@ export class ImBridge {
   #peerBySessionId = new Map();
   #turnsByPeer = new Map();
   #questionWaitersByPeer = new Map();
+  #langByPeer = new Map();
   #questionTimeoutMs;
   #upstreamQuestionProvider;
 
@@ -193,6 +176,26 @@ export class ImBridge {
   }
 
   /**
+   * Resolve the conversation language for a peer. A message containing CJK
+   * switches the peer to Chinese; otherwise the peer keeps its remembered
+   * language (so a slash command or a numeric answer doesn't flip it back).
+   */
+  #resolveLang(peerKey, text) {
+    const detected = detectLanguage(text);
+    if (detected === "zh" || !this.#langByPeer.has(peerKey)) {
+      this.#langByPeer.set(peerKey, detected);
+    }
+    return this.#langByPeer.get(peerKey) ?? "en";
+  }
+
+  /** Localized activity label for a tool; unknown tools fall back to the raw name. */
+  #activityLabel(lang, name) {
+    const key = `activity.${name}`;
+    const label = t(lang, key);
+    return label === key ? name : label;
+  }
+
+  /**
    * Install the follow-up-question routing provider on `ctx.userQuestions`.
    *
    * The seam allows exactly one provider per context, and in Web profiles
@@ -235,7 +238,7 @@ export class ImBridge {
     try {
       const answers = [];
       for (const question of request.questions ?? []) {
-        await this.#sendQuestion(turn, renderQuestion(question));
+        await this.#sendQuestion(turn, renderQuestion(question, turn?.lang));
         const answerText = await this.#waitForAnswer(peerKey, request.signal);
         answers.push(parseAnswer(answerText, question));
       }
@@ -281,7 +284,7 @@ export class ImBridge {
         fn(value);
       };
       if (this.#questionTimeoutMs > 0) {
-        timer = setTimeout(() => finish(reject, new Error("Timed out waiting for an answer; the question was cancelled")), this.#questionTimeoutMs);
+        timer = setTimeout(() => finish(reject, new Error(t(this.#langByPeer.get(peerKey) ?? "en", "question.timeout"))), this.#questionTimeoutMs);
         timer.unref?.();
       }
       signal?.addEventListener("abort", onAbort, { once: true });
@@ -390,7 +393,7 @@ export class ImBridge {
   }
 
   /** Classify one live session event into sink calls (streaming text + activity). */
-  #routeEvent(event, sink, streamState) {
+  #routeEvent(event, sink, streamState, lang) {
     switch (event.type) {
       case "assistant/chunk": {
         const chunk = event.data.chunk;
@@ -400,13 +403,13 @@ export class ImBridge {
           emit(sink, "onChunk", chunk.text);
         } else if (chunk?.type === "reasoning-delta" && !streamState.thinkingShown) {
           streamState.thinkingShown = true;
-          emit(sink, "onActivity", "Thinking…");
+          emit(sink, "onActivity", t(lang, "activity.thinking"));
         }
         break;
       }
       case "tool/call": {
         streamState.thinkingShown = false;
-        emit(sink, "onActivity", activityLabel(event.data.name));
+        emit(sink, "onActivity", this.#activityLabel(lang, event.data.name));
         break;
       }
       default:
@@ -414,7 +417,7 @@ export class ImBridge {
     }
   }
 
-  async #handleTurn(peerKey, agent, text, sink) {
+  async #handleTurn(peerKey, agent, text, sink, lang) {
     const firstSeq = agent.session.seq;
     let timedOut = false;
     const streamState = { streamed: false, thinkingShown: false };
@@ -440,12 +443,12 @@ export class ImBridge {
 
     const handler = (event) => {
       watchdog.poke();
-      this.#routeEvent(event, sink, streamState);
+      this.#routeEvent(event, sink, streamState, lang);
     };
     this.#handlersBySession.set(agent.session.id, handler);
     // Publish the active turn so the follow-up-question provider can pause the
     // watchdog and reach this peer's sink while the agent waits for the human.
-    this.#turnsByPeer.set(peerKey, { sink, watchdog });
+    this.#turnsByPeer.set(peerKey, { sink, watchdog, lang });
 
     try {
       agent.followup(createUserMessage({
@@ -463,8 +466,8 @@ export class ImBridge {
     if (this.#sessions != null) await this.#sessions.flush(agent.session).catch(() => {});
     const outcome = summarizeTurn(agent.session.events, firstSeq);
     let replyText = outcome.text;
-    if (timedOut && replyText === "") replyText = TIMEOUT_FALLBACK;
-    if (replyText === "") replyText = fallbackForTurnReason(outcome.reason);
+    if (timedOut && replyText === "") replyText = t(lang, "timeout.fallback");
+    if (replyText === "") replyText = fallbackForTurnReason(outcome.reason, lang);
     if (replyText !== "") emit(sink, "onFinal", replyText);
     return replyText;
   }
@@ -480,6 +483,7 @@ export class ImBridge {
     const peerKey = this.#peerKey(provider, peerId);
     const resolvedSink = normalizeSink(sink, reply);
     const command = this.#commandsEnabled ? parseCommand(text) : null;
+    const lang = this.#resolveLang(peerKey, text);
 
     // A follow-up question is awaiting this peer's next message. Answer it
     // directly rather than queueing a turn behind the (blocked) asking turn.
@@ -488,7 +492,7 @@ export class ImBridge {
       if (command != null) {
         // A slash command while a question is pending is an escape hatch: cancel
         // the question so the turn settles, then run the command below.
-        waiter.reject(new Error("Received a command while waiting for an answer; cancelled the question"));
+        waiter.reject(new Error(t(lang, "question.cancelledByCommand")));
       } else {
         waiter.resolve(text);
         return Promise.resolve(text);
@@ -498,13 +502,13 @@ export class ImBridge {
     const previous = this.#queuesByPeer.get(peerKey) ?? Promise.resolve();
     const next = previous.then(async () => {
       if (command != null) {
-        const replyText = await this.#runCommand(peerKey, command);
+        const replyText = await this.#runCommand(peerKey, command, lang);
         if (replyText !== "") await this.#replyNow(resolvedSink, replyText);
         if (command.name === "restart" && this.#restartEnabled) this.#restartProcess();
         return replyText;
       }
       const { agent } = await this.#acquireAgent(peerKey);
-      return await this.#handleTurn(peerKey, agent, text, resolvedSink);
+      return await this.#handleTurn(peerKey, agent, text, resolvedSink, lang);
     });
     // Keep the chain alive on failure so the peer queue never wedges.
     this.#queuesByPeer.set(peerKey, next.catch(() => {}));
@@ -514,37 +518,37 @@ export class ImBridge {
   // --- slash commands -------------------------------------------------------
 
   /** Dispatch one parsed command and return the plain-text reply. */
-  async #runCommand(peerKey, { name, args }) {
+  async #runCommand(peerKey, { name, args }, lang) {
     switch (name) {
       case "help":
-        return this.#helpText();
+        return this.#helpText(lang);
       case "model":
-        return await this.#modelCommand(peerKey, args);
+        return await this.#modelCommand(peerKey, args, lang);
       case "new":
       case "reset":
-        return await this.#resetCommand(peerKey);
+        return await this.#resetCommand(peerKey, lang);
       case "restart":
-        return this.#restartReply();
+        return this.#restartReply(lang);
       default:
-        return `Unknown command /${name}. Send /help to see available commands.`;
+        return t(lang, "cmd.unknown", { name });
     }
   }
 
-  #helpText() {
+  #helpText(lang) {
     return [
-      "IM Bridge commands:",
-      "/help — show this help",
-      "/model — show the current model and available models",
-      "/model <provider>/<model> — switch this chat's model (e.g. /model deepseek-official/deepseek-v4-flash)",
-      "/model reset — restore the default model",
-      "/new (or /reset) — clear this chat and start a new conversation",
-      "/restart — restart the dsh web process (continue chatting after it's back)",
+      t(lang, "help.title"),
+      t(lang, "help.help"),
+      t(lang, "help.model"),
+      t(lang, "help.modelSwitch"),
+      t(lang, "help.modelReset"),
+      t(lang, "help.new"),
+      t(lang, "help.restart"),
     ].join("\n");
   }
 
-  #restartReply() {
-    if (!this.#restartEnabled) return "The restart command is disabled (restartEnabled: false).";
-    return "Restarting dsh web… give it a moment, then continue chatting.";
+  #restartReply(lang) {
+    if (!this.#restartEnabled) return t(lang, "restart.disabled");
+    return t(lang, "restart.ack");
   }
 
   /** Send a command reply through the sink and await its delivery. */
@@ -611,30 +615,30 @@ export class ImBridge {
     return this.#modelOverridesByPeer.get(peerKey) ?? this.#defaultModel?.currentSelection();
   }
 
-  async #modelCommand(peerKey, args) {
+  async #modelCommand(peerKey, args, lang) {
     const arg = (args ?? "").trim();
     if (arg === "reset" || arg === "default") {
       this.#modelOverridesByPeer.delete(peerKey);
       this.#holdersByPeer.get(peerKey)?.clear();
-      return await this.#modelStatus(peerKey);
+      return await this.#modelStatus(peerKey, lang);
     }
-    if (arg === "") return await this.#modelStatus(peerKey);
-    return await this.#switchModel(peerKey, arg);
+    if (arg === "") return await this.#modelStatus(peerKey, lang);
+    return await this.#switchModel(peerKey, arg, lang);
   }
 
-  async #modelStatus(peerKey) {
+  async #modelStatus(peerKey, lang) {
     const current = this.#currentSelection(peerKey);
     const groups = await this.#loadCatalog();
     const lines = [];
-    lines.push(`Current model: ${current?.provider ?? "?"}/${current?.model ?? "?"}`);
+    lines.push(t(lang, "model.current", { provider: current?.provider ?? "?", model: current?.model ?? "?" }));
     lines.push("");
-    lines.push("Available models:");
+    lines.push(t(lang, "model.available"));
     if (groups.length === 0) {
-      lines.push("(model service unavailable; cannot list models)");
+      lines.push(t(lang, "model.unavailable"));
     }
     for (const { provider, models, error } of groups) {
       if (models.length === 0) {
-        lines.push(`• ${provider.name} (${provider.id})${error ? `: ${error}` : ": no models available"}`);
+        lines.push(`• ${provider.name} (${provider.id})${error ? `: ${error}` : t(lang, "model.empty")}`);
         continue;
       }
       lines.push(`• ${provider.name} (${provider.id})`);
@@ -644,13 +648,13 @@ export class ImBridge {
       }
     }
     lines.push("");
-    lines.push("Switch: /model <provider>/<model> or /model <model>");
-    lines.push("Reset: /model reset");
+    lines.push(t(lang, "model.switchHint"));
+    lines.push(t(lang, "model.resetHint"));
     return lines.join("\n");
   }
 
-  async #switchModel(peerKey, arg) {
-    if (this.#llm == null) return "Model service unavailable; cannot switch.";
+  async #switchModel(peerKey, arg, lang) {
+    if (this.#llm == null) return t(lang, "model.cannotSwitch");
     let provider;
     let model;
     if (arg.includes("/")) {
@@ -661,10 +665,10 @@ export class ImBridge {
       model = arg;
       provider = await this.#findProviderForModel(model);
       if (provider === undefined) {
-        return `Model "${model}" not found. Send /model to see available models.`;
+        return t(lang, "model.notFound", { model });
       }
     }
-    if (provider === "" || model === "") return `Usage: /model <provider>/<model> (e.g. /model deepseek-official/deepseek-v4-pro).`;
+    if (provider === "" || model === "") return t(lang, "model.usage");
     try {
       const { config } = await this.#llm.resolveCallConfig({ provider, model });
       const selected = {
@@ -675,9 +679,9 @@ export class ImBridge {
       this.#modelOverridesByPeer.set(peerKey, selected);
       const holder = this.#holdersByPeer.get(peerKey);
       if (holder != null) holder.current = selected;
-      return `Switched to ${selected.provider}/${selected.model}. Applies to this chat only.`;
+      return t(lang, "model.switched", { provider: selected.provider, model: selected.model });
     } catch (error) {
-      return `Switch failed: ${error?.message ?? String(error)}`;
+      return t(lang, "model.switchFailed", { error: error?.message ?? String(error) });
     }
   }
 
@@ -691,9 +695,9 @@ export class ImBridge {
     return undefined;
   }
 
-  async #resetCommand(peerKey) {
+  async #resetCommand(peerKey, lang) {
     await this.#resetPeer(peerKey);
-    return "Started a new conversation; history cleared.";
+    return t(lang, "reset.done");
   }
 
   /** Drop the peer's live agent (and its model holder) so the next message mints a fresh one. */
@@ -703,7 +707,7 @@ export class ImBridge {
     this.#holdersByPeer.delete(peerKey);
     // Cancel a pending follow-up question and drop turn state so a stale answer
     // cannot misroute or wedge the reset.
-    this.#questionWaitersByPeer.get(peerKey)?.reject(new Error("Conversation reset"));
+    this.#questionWaitersByPeer.get(peerKey)?.reject(new Error(t(this.#langByPeer.get(peerKey) ?? "en", "reset.pendingQuestion")));
     this.#turnsByPeer.delete(peerKey);
     if (pending == null) return;
     try {
@@ -753,22 +757,22 @@ function summarizeTurn(events, firstSeq) {
 }
 
 /** Turn a non-text turn ending into a human-readable IM fallback reply. */
-function fallbackForTurnReason(reason) {
+function fallbackForTurnReason(reason, lang) {
   switch (reason?.kind) {
     case "error": {
-      const detail = reason.error?.message ?? "unknown error";
-      return `⚠️ Failed: ${detail}`;
+      const detail = reason.error?.message ?? t(lang, "fallback.errorDetail");
+      return t(lang, "fallback.error", { detail });
     }
     case "aborted":
-      return "⚠️ The reply was cancelled. Please send it again.";
+      return t(lang, "fallback.aborted");
     case "interrupted":
-      return "⚠️ The reply was interrupted. Please send it again.";
+      return t(lang, "fallback.interrupted");
     case "blocked":
-      return "⚠️ The reply was blocked. Please rephrase or try again later.";
+      return t(lang, "fallback.blocked");
     case "max-tokens":
-      return "⚠️ The reply exceeded the length limit. Please narrow the scope and retry.";
+      return t(lang, "fallback.maxTokens");
     case "completed":
     default:
-      return "I finished, but no sendable reply was produced this time. Please ask again or rephrase.";
+      return t(lang, "fallback.noReply");
   }
 }

@@ -3,6 +3,8 @@ import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import QRCode from "qrcode";
+import { markdownToPlainText } from "./markdown.js";
+import { detectLanguage, t } from "./i18n.js";
 
 /**
  * WeChat channel over the official Tencent OpenClaw Weixin protocol
@@ -203,7 +205,7 @@ export class WeChatChannel {
       switch (st.status) {
         case "confirmed": {
           if (!st.bot_token) {
-            this.#status.setWechat({ scanning: false, qrcode: null, error: "server did not return bot_token" });
+            this.#status.setWechat({ scanning: false, qrcode: null, error: t("en", "wechat.noBotToken") });
             return;
           }
           this.#creds = {
@@ -220,11 +222,11 @@ export class WeChatChannel {
         case "expired":
         case "binded_redirect":
         case "verify_code_blocked": {
-          this.#status.setWechat({ scanning: false, qrcode: null, error: `Connection not completed (${st.status}); please scan again` });
+          this.#status.setWechat({ scanning: false, qrcode: null, error: t("en", "wechat.connectIncomplete", { status: st.status }) });
           return;
         }
         case "need_verifycode": {
-          this.#status.setWechat({ error: "WeChat requires a pairing verification code, which is not supported in the panel yet; please try again later" });
+          this.#status.setWechat({ error: t("en", "wechat.verifyCode") });
           break;
         }
         case "scaned":
@@ -282,8 +284,9 @@ export class WeChatChannel {
     // Show a "typing…" indicator while the agent works (WeChat iLink has no streaming).
     const typing = this.#beginTyping(fromId, contextToken);
     const streamer = new WeChatReplyStreamer(
-      (t) => this.#send(fromId, contextToken, t),
+      (msg) => this.#send(fromId, contextToken, msg),
       typing,
+      detectLanguage(text),
     );
 
     this.#bridge.handleInbound({
@@ -409,12 +412,14 @@ export class WeChatChannel {
 class WeChatReplyStreamer {
   #sendText;
   #typing;
+  #lang;
   #labels = [];
   #lastLabel = "";
 
-  constructor(sendText, typing) {
+  constructor(sendText, typing, lang) {
     this.#sendText = sendText;
     this.#typing = typing; // { stop(): void }
+    this.#lang = lang ?? "en";
   }
 
   onChunk() {
@@ -422,7 +427,7 @@ class WeChatReplyStreamer {
   }
 
   onActivity(label) {
-    if (label === this.#lastLabel || label === "Thinking…") return;
+    if (label === this.#lastLabel || label === t(this.#lang, "activity.thinking")) return;
     this.#lastLabel = label;
     if (this.#labels.length < 10 && !this.#labels.includes(label)) {
       this.#labels.push(label);
@@ -439,6 +444,6 @@ class WeChatReplyStreamer {
     if (this.#labels.length > 0) {
       await this.#sendText(`⏳ ${this.#labels.join(" → ")}`).catch(() => {});
     }
-    await this.#sendText(text).catch(() => {});
+    await this.#sendText(markdownToPlainText(text)).catch(() => {});
   }
 }

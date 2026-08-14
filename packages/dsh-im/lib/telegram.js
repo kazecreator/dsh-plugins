@@ -1,4 +1,5 @@
-import { markdownToTelegramHtml } from "./markdown.js";
+import { markdownToPlainText, markdownToTelegramHtml } from "./markdown.js";
+import { detectLanguage, t } from "./i18n.js";
 
 const JSON_HEADERS = { "Content-Type": "application/json" };
 
@@ -129,7 +130,7 @@ export class TelegramChannel {
     sendTyping();
     const typingTimer = setInterval(sendTyping, 4000);
 
-    const streamer = new TelegramReplyStreamer(message.chat.id, (method, body) => this.#call(method, body));
+    const streamer = new TelegramReplyStreamer(message.chat.id, (method, body) => this.#call(method, body), detectLanguage(text));
 
     this.#bridge.handleInbound({
       provider: "telegram",
@@ -162,6 +163,7 @@ export class TelegramChannel {
 class TelegramReplyStreamer {
   #chatId;
   #call;
+  #lang;
   #buffer = "";
   #messageId = null;
   #statusId = null;
@@ -170,9 +172,10 @@ class TelegramReplyStreamer {
   #opening = null;
   #activityChain = Promise.resolve();
 
-  constructor(chatId, call) {
+  constructor(chatId, call, lang) {
     this.#chatId = chatId;
     this.#call = call;
+    this.#lang = lang ?? "en";
   }
 
   #render(md) {
@@ -189,7 +192,7 @@ class TelegramReplyStreamer {
         console.warn("[dsh-im] telegram HTML send failed, falling back to plain text:", error?.message ?? error);
       }
     }
-    const sent = await this.#call("sendMessage", { chat_id: this.#chatId, text: md });
+    const sent = await this.#call("sendMessage", { chat_id: this.#chatId, text: markdownToPlainText(md) });
     return sent?.message_id;
   }
 
@@ -198,7 +201,7 @@ class TelegramReplyStreamer {
     const html = this.#render(md);
     const body = html !== ""
       ? { chat_id: this.#chatId, message_id: messageId, text: html, parse_mode: "HTML" }
-      : { chat_id: this.#chatId, message_id: messageId, text: md };
+      : { chat_id: this.#chatId, message_id: messageId, text: markdownToPlainText(md) };
     try {
       await this.#call("editMessageText", body);
     } catch (error) {
@@ -206,7 +209,7 @@ class TelegramReplyStreamer {
       if (/not modified/i.test(error?.message ?? "")) return;
       // HTML parse failure → retry as plain text.
       if (html !== "") {
-        await this.#call("editMessageText", { chat_id: this.#chatId, message_id: messageId, text: md }).catch(() => {});
+        await this.#call("editMessageText", { chat_id: this.#chatId, message_id: messageId, text: markdownToPlainText(md) }).catch(() => {});
       }
     }
   }
@@ -285,7 +288,7 @@ class TelegramReplyStreamer {
     // Settle the status line only after any in-flight activity update lands.
     await this.#activityChain.catch(() => {});
     if (this.#statusId != null) {
-      await this.#call("editMessageText", { chat_id: this.#chatId, message_id: this.#statusId, text: "✅ Done" }).catch(() => {});
+      await this.#call("editMessageText", { chat_id: this.#chatId, message_id: this.#statusId, text: t(this.#lang, "status.done") }).catch(() => {});
     }
   }
 }

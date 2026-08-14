@@ -154,6 +154,14 @@ allowlist tight, and note that WeChat has no allowlist today.
   incremental delivery (no in-place edit), so per-token streaming is not
   possible; progress is coalesced to respect the ~7 msgs / 5 min outbound rate
   limit.
+- **Markdown is rendered per channel.** Telegram converts markdown to Telegram
+  HTML (headings, lists, code blocks, tables) and falls back to plain text if
+  HTML fails; WeChat converts markdown to readable plain text (iLink has no
+  markup support).
+- **The bridge's own messages follow the conversation language.** Activity
+  labels, command replies, follow-up question prompts, and status text are shown
+  in Chinese when you chat in Chinese, and English otherwise (auto-detected per
+  chat).
 - In Web profiles the bridge joins the active/default agent preset so code
   search and other tools behave like a normal Web session. The `agentReplyTimeoutMs`
   above is an **idle** watchdog (reset on every new event), so it keeps a stuck

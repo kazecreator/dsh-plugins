@@ -1,3 +1,5 @@
+import { t } from "./i18n.js";
+
 /**
  * Plain-text rendering and answer parsing for `ask_user_question` follow-ups
  * relayed over IM. IM is a single-message-per-turn medium, so the bridge renders
@@ -6,14 +8,14 @@
  */
 
 /** Render one question as a plain-text prompt (works for both Telegram and WeChat). */
-export function renderQuestion(question) {
+export function renderQuestion(question, lang = "en") {
   const header = typeof question.header === "string" && question.header.trim() !== ""
     ? question.header.trim()
-    : "Confirmation needed";
+    : t(lang, "q.headerDefault");
   const lines = [`❓ ${header}`, "", question.question ?? ""];
   const options = Array.isArray(question.options) ? question.options : [];
   if (options.length > 0) {
-    lines.push("", "Options:");
+    lines.push("", t(lang, "q.options"));
     for (let i = 0; i < options.length; i += 1) {
       const option = options[i] ?? {};
       const label = typeof option.label === "string" ? option.label : String(option.label ?? "");
@@ -22,9 +24,9 @@ export function renderQuestion(question) {
         : "";
       lines.push(`${i + 1}. ${label}${description}`);
     }
-    lines.push("", "Reply with the option number (e.g. 1) or type your answer.");
+    lines.push("", t(lang, "q.replyHint"));
   } else {
-    lines.push("", "(just reply with your answer)");
+    lines.push("", t(lang, "q.replyFree"));
   }
   return lines.join("\n");
 }

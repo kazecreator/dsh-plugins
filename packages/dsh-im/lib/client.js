@@ -17,6 +17,57 @@ window.__ModuleLoader__.load({
       err: "var(--dsw-alias-state-error-primary)",
     };
 
+    // Panel copy, localized to the DSH UI language (zh when the UI locale or
+    // browser language is Chinese, English otherwise).
+    var UI = {
+      en: {
+        connected: "Connected",
+        notConnected: "Not connected",
+        disabled: "Disabled",
+        enterToken: "Enter new token",
+        tokenFrom: "Bot token from @BotFather",
+        save: "Save",
+        connect: "Connect",
+        cancel: "Cancel",
+        tokenConfigured: "Token configured",
+        change: "Change",
+        disconnect: "Disconnect",
+        waitingScan: "Waiting for scan",
+        scanHint: "Scan with WeChat to connect the AI bot",
+        scanConnect: "Scan to connect",
+        connecting: "Connecting...",
+      },
+      zh: {
+        connected: "已连接",
+        notConnected: "未连接",
+        disabled: "未启用",
+        enterToken: "输入新 token",
+        tokenFrom: "Bot token 来自 @BotFather",
+        save: "保存",
+        connect: "连接",
+        cancel: "取消",
+        tokenConfigured: "已配置 token",
+        change: "更改",
+        disconnect: "断开",
+        waitingScan: "等待扫码",
+        scanHint: "用微信扫码连接 AI bot",
+        scanConnect: "扫码连接",
+        connecting: "正在连接中...",
+      },
+    };
+
+    function detectUiLang() {
+      var lang = (typeof document !== "undefined" && document.documentElement && document.documentElement.lang) ||
+        (typeof navigator !== "undefined" && navigator.language) ||
+        "en";
+      return String(lang).toLowerCase().indexOf("zh") === 0 ? "zh" : "en";
+    }
+
+    var uiLang = detectUiLang();
+    function t(key) {
+      return (UI[uiLang] && UI[uiLang][key]) || UI.en[key] || key;
+    }
+
     function Dot(color) {
       return React.createElement("span", {
         style: { display: "inline-block", width: 7, height: 7, borderRadius: "50%", background: color, flexShrink: 0, verticalAlign: "middle" },
@@ -80,8 +131,8 @@ window.__ModuleLoader__.load({
 
       // ---- Telegram ----
       var teleStatus = telegram && telegram.enabled
-        ? (telegram.connected ? "Connected" : "Not connected") + (telegram.bot ? " \u00b7 @" + telegram.bot : "")
-        : "Disabled";
+        ? (telegram.connected ? t("connected") : t("notConnected")) + (telegram.bot ? " \u00b7 @" + telegram.bot : "")
+        : t("disabled");
 
       var teleChildren = [
         React.createElement("div", { key: "t", style: titleStyle },
@@ -94,32 +145,32 @@ window.__ModuleLoader__.load({
           React.createElement("div", { key: "in", style: rowStyle },
             React.createElement(P.Input, {
               type: "password", value: token, style: { flex: 1 },
-              placeholder: editing ? "Enter new token" : "Bot token from @BotFather",
+              placeholder: editing ? t("enterToken") : t("tokenFrom"),
               onChange: function (e) { setToken(e.target.value); },
             }),
             React.createElement(P.Button, {
               variant: "primary", size: "sm", disabled: busy,
               onClick: function () { post("/im/telegram", { token: token }); },
-            }, editing ? "Save" : "Connect")),
+            }, editing ? t("save") : t("connect"))),
           editing ? React.createElement(P.Button, {
             key: "cancel", variant: "ghost", size: "sm", disabled: busy,
             onClick: function () { setEditing(false); setToken(""); },
-          }, "Cancel") : null);
+          }, t("cancel")) : null);
       } else {
         teleChildren.push(
           React.createElement("div", { key: "cfg", style: rowStyle },
-            React.createElement("span", { style: mutedStyle }, "Token configured"),
-            React.createElement(P.Button, { variant: "ghost", size: "sm", disabled: busy, onClick: function () { setEditing(true); setToken(""); } }, "Change"),
-            React.createElement(P.Button, { variant: "outline", size: "sm", disabled: busy, onClick: function () { post("/im/telegram", { token: "" }); } }, "Disconnect")));
+            React.createElement("span", { style: mutedStyle }, t("tokenConfigured")),
+            React.createElement(P.Button, { variant: "ghost", size: "sm", disabled: busy, onClick: function () { setEditing(true); setToken(""); } }, t("change")),
+            React.createElement(P.Button, { variant: "outline", size: "sm", disabled: busy, onClick: function () { post("/im/telegram", { token: "" }); } }, t("disconnect"))));
       }
       if (telegram && telegram.error) teleChildren.push(React.createElement("div", { key: "err", style: errStyle }, telegram.error));
 
       // ---- WeChat ----
       var wxStatus = wechat && wechat.loggedIn
-        ? "Connected" + (wechat.userName ? " \u00b7 " + wechat.userName : "")
+        ? t("connected") + (wechat.userName ? " \u00b7 " + wechat.userName : "")
         : wechat && wechat.scanning
-          ? "Waiting for scan"
-          : wechat && wechat.enabled ? "Not connected" : "Disabled";
+          ? t("waitingScan")
+          : wechat && wechat.enabled ? t("notConnected") : t("disabled");
 
       var wxChildren = [
         React.createElement("div", { key: "t", style: titleStyle },
@@ -134,15 +185,15 @@ window.__ModuleLoader__.load({
             style: { width: 220, height: 220, borderRadius: 10, border: "1px solid " + T.border },
           }),
           React.createElement("div", { style: { marginTop: 8, fontSize: 12, color: T.textMuted } },
-            "Scan with WeChat to connect the AI bot")));
+            t("scanHint"))));
       }
 
       wxChildren.push(React.createElement("div", { key: "btn", style: rowStyle },
         wechat && wechat.loggedIn
-          ? React.createElement(P.Button, { variant: "outline", size: "sm", disabled: busy, onClick: function () { post("/im/wechat/logout"); } }, "Disconnect")
-          : React.createElement(P.Button, { variant: "primary", size: "sm", disabled: busy, onClick: function () { post("/im/wechat/start"); } }, "Scan to connect"),
+          ? React.createElement(P.Button, { variant: "outline", size: "sm", disabled: busy, onClick: function () { post("/im/wechat/logout"); } }, t("disconnect"))
+          : React.createElement(P.Button, { variant: "primary", size: "sm", disabled: busy, onClick: function () { post("/im/wechat/start"); } }, t("scanConnect")),
         wechat && wechat.enabled && !wechat.loggedIn && !wechat.scanning
-          ? React.createElement("span", { style: mutedStyle }, "Connecting...") : null));
+          ? React.createElement("span", { style: mutedStyle }, t("connecting")) : null));
       if (wechat && wechat.error) wxChildren.push(React.createElement("div", { key: "err", style: errStyle }, wechat.error));
 
       return React.createElement("div", null,
