@@ -1,5 +1,5 @@
 window.__ModuleLoader__.load({
-  id: "@kaze/dsh-im",
+  id: "@kazecreator/dsh-im",
   factory: (require) => {
     var module = { exports: {} };
     var exports = module.exports;

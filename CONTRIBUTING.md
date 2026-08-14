@@ -23,7 +23,7 @@ Every plugin follows the same package structure under `packages/<name>/`:
 
 ```
 packages/<name>/
-  package.json              # name @kaze/<name>; keywords include "dsh-plugin"
+  package.json              # name @kazecreator/<name>; keywords include "dsh-plugin"
   lib/index.js              # Cordis plugin: export { apply, inject, name }
   lib/...                   # plugin modules
   README.md                 # install + config docs
@@ -33,7 +33,7 @@ packages/<name>/
 
 Checklist:
 
-1. **`package.json`** — set `name` (`@kaze/<name>`), `license: "MIT"`, the
+1. **`package.json`** — set `name` (`@kazecreator/<name>`), `license: "MIT"`, the
    `@deepseek-ai/*` `peerDependencies` your plugin imports, and `keywords`
    including `dsh-plugin`. If the plugin ships a Web UI panel, add a
    `dsh.client` block and an `exports["./client"]` entry (see `dsh-im` for a

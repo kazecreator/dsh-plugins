@@ -1,4 +1,4 @@
-# @kaze/dsh-im
+# @kazecreator/dsh-im
 
 DeepSeek Harness **IM bridge plugin**: route inbound **Telegram** and **WeChat**
 messages into per-peer agent sessions and send the agent's reply back to the
@@ -17,7 +17,7 @@ Install from npm, then enable it in the profile's patch config and restart:
 
 ```sh
 # 1. install into a profile (npm)
-dsh plugin --profile web add @kaze/dsh-im
+dsh plugin --profile web add @kazecreator/dsh-im
 
 # 2. edit $DSH_HOME/profiles/web/cordis.patch.yml (see example.cordis.patch.yml)
 ```
@@ -40,7 +40,7 @@ inert until you opt in):
 ```yaml
 - insert:
     - id: dsh-im
-      name: '@kaze/dsh-im'
+      name: '@kazecreator/dsh-im'
       config:
         telegramEnabled: true
         telegramBotToken: '123456:ABC-...'

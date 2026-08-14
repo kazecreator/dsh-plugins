@@ -15,10 +15,10 @@ options) as a normal message you can answer.
 
 ## Install a plugin
 
-Plugins are published to npm under the `@kaze` scope:
+Plugins are published to npm under the `@kazecreator` scope:
 
 ```sh
-dsh plugin --profile <profile> add @kaze/dsh-im
+dsh plugin --profile <profile> add @kazecreator/dsh-im
 ```
 
 Then merge the plugin's `example.cordis.patch.yml` into

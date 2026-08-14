@@ -1,4 +1,4 @@
-# Example patch layer for @kaze/dsh-im. Merge the `insert` block below into
+# Example patch layer for @kazecreator/dsh-im. Merge the `insert` block below into
 # $DSH_HOME/profiles/<profile>/cordis.patch.yml (it is a top-level YAML array).
 #
 # Both channels are disabled by default, so the bridge mounts inert until you
@@ -6,7 +6,7 @@
 
 - insert:
     - id: dsh-im
-      name: '@kaze/dsh-im'
+      name: '@kazecreator/dsh-im'
       config:
         # --- Agent ---
         # agentPreset: ''
