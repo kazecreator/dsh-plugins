@@ -5,8 +5,9 @@
 
 DeepSeek Harness **IM bridge plugin**: route inbound **Telegram** and **WeChat**
 messages into per-peer agent sessions and send the agent's reply back to the
-originating chat. Each `provider:peerId` pair gets its own live DSH Agent, so
-conversation history persists for the process lifetime.
+originating chat. Each `provider:peerId` pair gets its own live DSH Agent, and
+its conversation history survives restarts: the peer → session mapping is
+recorded on disk and the session is resumed on boot.
 
 - **Telegram** — official Bot API over long polling (`getUpdates`/`sendMessage`),
   no heavy dependencies (uses Node's global `fetch`).
@@ -136,23 +137,28 @@ normal prompt.
 
 Model switches are **per peer** (per chat) and survive `/new`: the selection is
 kept in a per-peer override and re-applied when the next agent is created. They
-do **not** rewrite the profile-wide default model. The catalog is read live
-through the `llm` service, so it reflects whatever providers/adapters the
-profile currently has registered.
+do **not** rewrite the profile-wide default model. The per-peer override is held
+in memory, so it reverts to the profile default after a restart (the conversation
+history itself is kept). The catalog is read live through the `llm` service, so
+it reflects whatever providers/adapters the profile currently has registered.
 
 `/restart` re-executes the current process (`process.argv`) as a detached child
 and exits, so it works however dsh was launched (`dsh web`, `npm exec`, `npx`).
 The reply is delivered **before** the process exits; the child only triggers the
 parent's exit after it reports a successful spawn, so a failed relaunch leaves
-the bridge running. Because a restart drops the in-memory agent state and takes
-a few seconds, it is a DoS surface: keep Telegram's `telegramAllowedUserIds`
-allowlist tight, and note that WeChat has no allowlist today.
+the bridge running. Because a restart tears down the live agents and takes a few
+seconds (each peer's conversation history is resumed, not dropped), it is a DoS
+surface: keep Telegram's `telegramAllowedUserIds` allowlist tight, and note that
+WeChat has no allowlist today.
 
 ## Notes / limitations
 
-- The bridge is **in-memory**: agents (and history) live for the process
-  lifetime. On restart a peer gets a fresh session. Session-id persistence +
-  `agents.resume` is a planned follow-up.
+- **Conversation history survives restarts.** Each peer's session id is recorded
+  to `$DSH_HOME/storages/dsh-im/peers.json`, and the session is flushed to the
+  session-persistence backend after every turn. On boot the bridge calls
+  `agents.resume` to reload that session with its full event history. If a
+  session cannot be resumed (missing/corrupt log, persistence not configured),
+  the bridge falls back to a fresh session and re-records the new id.
 - **Telegram replies stream live**: assistant text is edited into one message
   in place as it is generated, and tool activity is mirrored into a separate
   status line (e.g. `⏳ Searching code…`).

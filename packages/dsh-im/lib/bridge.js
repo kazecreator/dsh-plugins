@@ -1,8 +1,8 @@
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { mkdirSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { installModelSelection } from "@deepseek-ai/dsh-agent";
 import { createUserMessage } from "@deepseek-ai/dsh-llm";
 import { SessionId } from "@deepseek-ai/dsh-session";
@@ -12,6 +12,30 @@ import { detectLanguage, t } from "./i18n.js";
 
 const DEFAULT_REPLY_TIMEOUT_MS = 120000;
 const CANCEL_SETTLE_TIMEOUT_MS = 5000;
+
+/** Persisted peer → session mapping, so a restart resumes each IM peer's agent session instead of losing its history. */
+function peersPath() {
+  const home = process.env.DSH_HOME ?? join(homedir(), ".dsh");
+  return join(home, "storages", "dsh-im", "peers.json");
+}
+
+function loadPeers() {
+  try {
+    const parsed = JSON.parse(readFileSync(peersPath(), "utf8"));
+    return parsed != null && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function savePeers(peers) {
+  try {
+    mkdirSync(dirname(peersPath()), { recursive: true });
+    writeFileSync(peersPath(), JSON.stringify(peers, null, 2) + "\n");
+  } catch (error) {
+    console.error("[dsh-im] failed to save peer sessions:", error?.message ?? error);
+  }
+}
 
 /** Remove DSH's `<invoke>`/`<function_calls>` text fallback, which some models emit when tools are unavailable. */
 function stripFakeToolCallMarkup(text) {
@@ -90,10 +114,11 @@ function makeWatchdog(timeoutMs, onTimeout) {
  * assistant reply to hand back to the originating chat.
  *
  * One live Agent is created per `provider:peerId` key and reused across
- * messages, so conversation history persists for the process lifetime. Turns
- * are serialized per peer with a promise chain: an agent drives one turn at a
- * time and a racing second message must not interleave its `whenIdle()` wait
- * with the first.
+ * messages. The peer's session id is persisted (`peers.json`) and the session
+ * is resumed on boot, so conversation history survives restarts instead of
+ * being lost. Turns are serialized per peer with a promise chain: an agent
+ * drives one turn at a time and a racing second message must not interleave its
+ * `whenIdle()` wait with the first.
  *
  * Each turn streams into a channel-supplied `sink` object whose methods are
  * all optional:
@@ -122,6 +147,7 @@ export class ImBridge {
   #turnsByPeer = new Map();
   #questionWaitersByPeer = new Map();
   #langByPeer = new Map();
+  #sessionIdByPeer = new Map();
   #questionTimeoutMs;
   #upstreamQuestionProvider;
 
@@ -144,6 +170,7 @@ export class ImBridge {
     this.#questionTimeoutMs = Number.isFinite(config.questionTimeoutMs) && config.questionTimeoutMs > 0
       ? config.questionTimeoutMs
       : 0;
+    this.#sessionIdByPeer = new Map(Object.entries(loadPeers()));
 
     // One process-wide subscription to the append feed; each turn registers a
     // per-session handler keyed by session id so live events drive streaming,
@@ -360,27 +387,54 @@ export class ImBridge {
       const preset = await this.#agentPresets.resolveMountable(presetId);
       presetId = preset.id;
     }
-    const { agent, dispose } = await this.#agents.create({
-      sessionId: SessionId(`session-${randomUUID()}`),
-      meta: {
-        cwd,
-        ...presetId === void 0 ? {} : { agentPreset: presetId },
-      },
-      agentOptions: {
-        provider: selection.provider,
-        model: selection.model,
-      },
-      setup: async (agentCtx) => {
-        installModelSelection(agentCtx, holder);
-        // Web profiles keep model-facing tools inside agent presets. Join the
-        // active/default preset so this IM agent gets the same coding tools as a
-        // Web session instead of an empty global tool layer. On profiles without
-        // a preset roster the tools remain global and this is a no-op.
-        if (this.#agentPresets?.mount != null) {
-          await this.#agentPresets.mount(agentCtx, presetId);
-        }
-      },
-    });
+    const agentOptions = {
+      provider: selection.provider,
+      model: selection.model,
+    };
+    const setup = async (agentCtx) => {
+      installModelSelection(agentCtx, holder);
+      // Web profiles keep model-facing tools inside agent presets. Join the
+      // active/default preset so this IM agent gets the same coding tools as a
+      // Web session instead of an empty global tool layer. On profiles without
+      // a preset roster the tools remain global and this is a no-op.
+      if (this.#agentPresets?.mount != null) {
+        await this.#agentPresets.mount(agentCtx, presetId);
+      }
+    };
+
+    // Resume the peer's persisted session when one exists, so a restart keeps
+    // the conversation history instead of minting an orphaned fresh session.
+    // Any resume failure (missing session, persistence error) falls back to a
+    // fresh session and re-persists its id.
+    const persistedSessionId = this.#sessionIdByPeer.get(peerKey);
+    let handle;
+    if (persistedSessionId !== undefined) {
+      try {
+        handle = await this.#agents.resume({
+          resumeSessionId: persistedSessionId,
+          agentOptions,
+          setup,
+        });
+      } catch (error) {
+        console.warn(`[dsh-im] resume failed for ${peerKey}, creating a fresh session:`, error?.message ?? error);
+        this.#sessionIdByPeer.delete(peerKey);
+      }
+    }
+    if (handle === undefined) {
+      const sessionId = SessionId(`session-${randomUUID()}`);
+      handle = await this.#agents.create({
+        sessionId,
+        meta: {
+          cwd,
+          ...presetId === void 0 ? {} : { agentPreset: presetId },
+        },
+        agentOptions,
+        setup,
+      });
+      this.#sessionIdByPeer.set(peerKey, handle.agent.session.id);
+      savePeers(Object.fromEntries(this.#sessionIdByPeer));
+    }
+    const { agent, dispose } = handle;
     await agent.whenIdle();
     this.#peerBySessionId.set(agent.session.id, peerKey);
     try {
@@ -709,6 +763,10 @@ export class ImBridge {
     // cannot misroute or wedge the reset.
     this.#questionWaitersByPeer.get(peerKey)?.reject(new Error(t(this.#langByPeer.get(peerKey) ?? "en", "reset.pendingQuestion")));
     this.#turnsByPeer.delete(peerKey);
+    // Forget the persisted session so the next message starts a fresh one.
+    if (this.#sessionIdByPeer.delete(peerKey)) {
+      savePeers(Object.fromEntries(this.#sessionIdByPeer));
+    }
     if (pending == null) return;
     try {
       const handle = await pending;

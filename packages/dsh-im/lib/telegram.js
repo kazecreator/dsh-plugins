@@ -1,7 +1,9 @@
-import { markdownToPlainText, markdownToTelegramHtml } from "./markdown.js";
+import { markdownToPlainText, markdownToTelegramHtml, splitPlainText } from "./markdown.js";
 import { t } from "./i18n.js";
 
 const JSON_HEADERS = { "Content-Type": "application/json" };
+/** Telegram `sendMessage` text limit (UTF-16 code units). */
+const TELEGRAM_TEXT_LIMIT = 4096;
 
 /**
  * Telegram Bot API channel via long polling (`getUpdates` + `sendMessage`).
@@ -187,6 +189,7 @@ class TelegramReplyStreamer {
   async #send(md) {
     const html = this.#render(md);
     if (html !== "") {
+      if (html.length > TELEGRAM_TEXT_LIMIT) return null; // too long for one message
       try {
         const sent = await this.#call("sendMessage", { chat_id: this.#chatId, text: html, parse_mode: "HTML" });
         return sent?.message_id;
@@ -194,7 +197,9 @@ class TelegramReplyStreamer {
         console.warn("[dsh-im] telegram HTML send failed, falling back to plain text:", error?.message ?? error);
       }
     }
-    const sent = await this.#call("sendMessage", { chat_id: this.#chatId, text: markdownToPlainText(md) });
+    const plain = markdownToPlainText(md);
+    if (plain.length > TELEGRAM_TEXT_LIMIT) return null;
+    const sent = await this.#call("sendMessage", { chat_id: this.#chatId, text: plain });
     return sent?.message_id;
   }
 
@@ -225,6 +230,8 @@ class TelegramReplyStreamer {
   async #flushEdit() {
     this.#editTimer = null;
     const md = this.#buffer;
+    const overLimit = this.#render(md).length > TELEGRAM_TEXT_LIMIT || markdownToPlainText(md).length > TELEGRAM_TEXT_LIMIT;
+    if (overLimit) return; // too long to stream in place; onFinal will split it
     if (this.#messageId != null) {
       await this.#edit(this.#messageId, md).catch(() => {});
       return;
@@ -282,7 +289,20 @@ class TelegramReplyStreamer {
       this.#editTimer = null;
     }
     if (this.#opening != null) await this.#opening.catch(() => {});
-    if (this.#messageId != null) {
+
+    const overLimit = this.#render(text).length > TELEGRAM_TEXT_LIMIT || markdownToPlainText(text).length > TELEGRAM_TEXT_LIMIT;
+    if (overLimit) {
+      // Replace the partial streamed message with a split batch of plain-text
+      // messages so a long reply is never silently dropped.
+      if (this.#messageId != null) {
+        await this.#call("deleteMessage", { chat_id: this.#chatId, message_id: this.#messageId }).catch(() => {});
+        this.#messageId = null;
+      }
+      for (const chunk of splitPlainText(markdownToPlainText(text), TELEGRAM_TEXT_LIMIT)) {
+        if (chunk === "") continue;
+        await this.#call("sendMessage", { chat_id: this.#chatId, text: chunk }).catch(() => {});
+      }
+    } else if (this.#messageId != null) {
       await this.#edit(this.#messageId, text);
     } else {
       await this.#send(text);

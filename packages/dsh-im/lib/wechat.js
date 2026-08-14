@@ -3,7 +3,7 @@ import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import QRCode from "qrcode";
-import { markdownToPlainText } from "./markdown.js";
+import { markdownToPlainText, splitPlainTextBytes } from "./markdown.js";
 import { detectLanguage, t } from "./i18n.js";
 
 /**
@@ -24,6 +24,12 @@ const BOT_TYPE = "3";
 const APP_ID = "bot";                       // the openclaw-weixin ilink app id
 const CLIENT_VERSION = "132102";            // uint32 for channel version 2.4.6
 const CHANNEL_VERSION = "2.4.6";
+
+// Conservative per-message byte ceiling for the iLink outbound path. WeChat's
+// text limit is not published for this protocol, so we stay under the widely
+// used 2048-byte text bound and split byte-aware (CJK chars are 3 bytes) so a
+// long reply is delivered in parts rather than silently dropped.
+const WECHAT_TEXT_BYTES = 2048;
 
 function credentialsPath() {
   const home = process.env.DSH_HOME ?? join(homedir(), ".dsh");
@@ -446,6 +452,10 @@ class WeChatReplyStreamer {
     if (this.#labels.length > 0) {
       await this.#sendText(`⏳ ${this.#labels.join(" → ")}`).catch(() => {});
     }
-    await this.#sendText(markdownToPlainText(text)).catch(() => {});
+    const plain = markdownToPlainText(text);
+    for (const chunk of splitPlainTextBytes(plain, WECHAT_TEXT_BYTES)) {
+      if (chunk === "") continue;
+      await this.#sendText(chunk).catch(() => {});
+    }
   }
 }
