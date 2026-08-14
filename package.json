@@ -1,52 +1,20 @@
 {
-  "name": "@kaze/dsh-im",
-  "version": "0.1.0",
-  "description": "DeepSeek Harness IM bridge plugin: route Telegram & WeChat messages into per-peer agent sessions and reply back",
+  "name": "dsh-plugins",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Monorepo of DeepSeek Harness (dsh) plugins by kazeCreator",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/kazecreator/dsh-plugins.git"
+  },
   "keywords": [
     "dsh",
     "dsh-plugin",
     "deepseek-harness",
-    "im",
-    "telegram",
-    "wechat",
-    "bridge",
-    "cordis"
+    "plugins"
   ],
-  "author": "kazeCreator <kazecreator@gmail.com>",
-  "license": "MIT",
-  "type": "module",
-  "main": "lib/index.js",
-  "exports": {
-    ".": "./lib/index.js",
-    "./client": "./lib/client.js",
-    "./package.json": "./package.json"
-  },
-  "files": [
-    "lib",
-    "README.md"
-  ],
-  "dsh": {
-    "client": {
-      "platform": "web",
-      "inject": ["@deepseek-ai/dsh-client-ui-primitives"]
-    }
-  },
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/kazecreator/dsh-im.git"
-  },
-  "homepage": "https://github.com/kazecreator/dsh-im#readme",
-  "bugs": {
-    "url": "https://github.com/kazecreator/dsh-im/issues"
-  },
-  "peerDependencies": {
-    "@deepseek-ai/cordis": "^4.0.1",
-    "@deepseek-ai/schemastery": "^3.18.1",
-    "@deepseek-ai/dsh-agent": "^0.1.0-rc.6",
-    "@deepseek-ai/dsh-session": "^0.1.0-rc.6",
-    "@deepseek-ai/dsh-llm": "^0.1.0-rc.6"
-  },
-  "dependencies": {
-    "qrcode": "^1.5.4"
-  }
+  "workspaces": [
+    "packages/*"
+  ]
 }
