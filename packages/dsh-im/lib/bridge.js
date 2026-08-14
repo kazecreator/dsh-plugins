@@ -14,6 +14,21 @@ import { saveRestartNotice } from "./restart-notice.js";
 const DEFAULT_REPLY_TIMEOUT_MS = 120000;
 const CANCEL_SETTLE_TIMEOUT_MS = 5000;
 
+/**
+ * Per-agent system-prompt section: the model is answering through a chat
+ * bridge (Telegram/WeChat), so it is nudged toward short plain-text replies
+ * that survive the channel's 4096-char message limit. Registered through the
+ * agent-scoped prompt-assembly waterfall (the same seam `installModelSelection`
+ * uses), so it never leaks into web-GUI sessions and unwinds with the agent.
+ */
+const IM_FORMATTING_PROMPT = [
+  "You are answering through an instant-messaging bridge (Telegram / WeChat), not the full web UI. Adapt replies to a chat thread:",
+  "- Lead with the answer or the decision, not a narrated process.",
+  "- Keep replies concise; prefer plain text over heavy Markdown.",
+  "- Avoid GFM tables and long fenced code blocks; use short inline code instead.",
+  "- Keep the final message well under ~3000 characters; the transport truncates near 4096.",
+].join("\n");
+
 /** Persisted peer → session mapping, so a restart resumes each IM peer's agent session instead of losing its history. */
 function peersPath() {
   const home = process.env.DSH_HOME ?? join(homedir(), ".dsh");
@@ -394,6 +409,18 @@ export class ImBridge {
     };
     const setup = async (agentCtx) => {
       installModelSelection(agentCtx, holder);
+      // Agent-scoped formatting instructions for the chat bridge. A scoped
+      // waterfall listener is the correct seam here: it only affects this
+      // agent's prompt assembly (web sessions are untouched) and the effect
+      // disposes with the agent, so it is safe to register without tracking
+      // the disposer.
+      agentCtx.on("system-prompt/assemble", async (_assembly, _context, next) => {
+        const assembled = await next();
+        return {
+          ...assembled,
+          sections: [...(assembled.sections ?? []), { name: "app:dsh-im", text: IM_FORMATTING_PROMPT }],
+        };
+      });
       // Web profiles keep model-facing tools inside agent presets. Join the
       // active/default preset so this IM agent gets the same coding tools as a
       // Web session instead of an empty global tool layer. On profiles without
@@ -449,9 +476,9 @@ export class ImBridge {
 
   /** Classify one live session event into sink calls (streaming text + activity). */
   #routeEvent(event, sink, streamState, lang) {
-    switch (event.type) {
+    switch (event?.type) {
       case "assistant/chunk": {
-        const chunk = event.data.chunk;
+        const chunk = event?.data?.chunk;
         if (chunk?.type === "text-delta" && typeof chunk.text === "string" && chunk.text !== "") {
           streamState.streamed = true;
           streamState.thinkingShown = false;
@@ -464,7 +491,7 @@ export class ImBridge {
       }
       case "tool/call": {
         streamState.thinkingShown = false;
-        emit(sink, "onActivity", this.#activityLabel(lang, event.data.name));
+        emit(sink, "onActivity", this.#activityLabel(lang, event?.data?.name));
         break;
       }
       default:
@@ -801,6 +828,7 @@ function summarizeTurn(events, firstSeq) {
   let text = "";
   let reason;
   for (const event of events) {
+    if (event == null) continue;
     if (event.seq < firstSeq) continue;
     if (event.type === "turn/start") {
       started = true;
@@ -808,14 +836,18 @@ function summarizeTurn(events, firstSeq) {
     }
     if (!started) continue;
     if (event.type === "assistant/message") {
-      const joined = event.data.message.content
-        .filter((block) => block.type === "text")
-        .map((block) => block.text)
+      // Defensive read: tolerate a missing `content` array, null blocks, or
+      // non-string text so a harness event-shape change degrades to a fallback
+      // reply instead of throwing.
+      const blocks = Array.isArray(event?.data?.message?.content) ? event.data.message.content : [];
+      const joined = blocks
+        .filter((block) => block?.type === "text")
+        .map((block) => (typeof block?.text === "string" ? block.text : ""))
         .join("");
       const cleaned = stripFakeToolCallMarkup(joined);
       if (cleaned !== "") text = cleaned;
     }
-    if (event.type === "turn/end") reason = event.data.reason;
+    if (event.type === "turn/end") reason = event?.data?.reason;
   }
   return { text, reason };
 }
