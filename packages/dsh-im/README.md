@@ -13,21 +13,26 @@ conversation history persists for the process lifetime.
 
 ## Install & enable
 
-The plugin is a plain Cordis plugin (not a bundle), so enablement is two steps:
-install it into the profile, then insert a patch row.
+Install from npm, then enable it in the profile's patch config and restart:
 
 ```sh
-# 1. install into a profile (copies the package into the profile's node_modules)
-cd /path/to/kaze-ds-plugins
-dsh plugin --profile web add file:./dsh-im
+# 1. install into a profile (npm)
+dsh plugin --profile web add @kaze/dsh-im
 
 # 2. edit $DSH_HOME/profiles/web/cordis.patch.yml (see example.cordis.patch.yml)
 ```
 
-> Use `file:` (copy), not `link:`: the profile resolves a plugin's
-> `@deepseek-ai/*` peers through `$DSH_HOME/profiles/node_modules` (the flat
-> fallback), and a `link:` symlink would re-anchor resolution at the checkout
-> directory where those peers are absent.
+To install from source instead, point `add` at the local package path:
+
+```sh
+cd /path/to/kaze-ds-plugins/packages/dsh-im
+dsh plugin --profile web add file:.
+```
+
+> The profile resolves a plugin's `@deepseek-ai/*` peers through
+> `$DSH_HOME/profiles/node_modules` (the flat fallback). Install via npm, or
+> via `file:` copy rather than `link:` (a `link:` symlink would re-anchor
+> resolution at the checkout directory where those peers are absent).
 
 Minimal patch (Telegram only; both channels off by default so the bridge is
 inert until you opt in):
