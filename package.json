@@ -33,11 +33,11 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/kazeCreator/dsh-im.git"
+    "url": "git+https://github.com/kazecreator/dsh-im.git"
   },
-  "homepage": "https://github.com/kazeCreator/dsh-im#readme",
+  "homepage": "https://github.com/kazecreator/dsh-im#readme",
   "bugs": {
-    "url": "https://github.com/kazeCreator/dsh-im/issues"
+    "url": "https://github.com/kazecreator/dsh-im/issues"
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "^4.0.1",
