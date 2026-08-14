@@ -285,7 +285,7 @@ class TelegramReplyStreamer {
     // Settle the status line only after any in-flight activity update lands.
     await this.#activityChain.catch(() => {});
     if (this.#statusId != null) {
-      await this.#call("editMessageText", { chat_id: this.#chatId, message_id: this.#statusId, text: "✅ 完成" }).catch(() => {});
+      await this.#call("editMessageText", { chat_id: this.#chatId, message_id: this.#statusId, text: "✅ Done" }).catch(() => {});
     }
   }
 }

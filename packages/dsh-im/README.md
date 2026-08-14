@@ -84,8 +84,8 @@ half (`./client`) injects an **IM Bridge** section into the Web Settings page
 with two named channel sections:
 
 - **Telegram** — status + a token input. Enter a `@BotFather` token and hit
-  保存/连接 to connect live; leave it empty to disconnect.
-- **WeChat** — status + a 扫码登录 button. When waiting for a scan, the login
+  Save/Connect to connect live; leave it empty to disconnect.
+- **WeChat** — status + a Scan to connect button. When waiting for a scan, the login
   QR renders directly in the panel for scanning.
 
 Colors use DSH theme tokens (`--dsw-alias-*`), so the panel follows light/dark.
@@ -147,10 +147,10 @@ allowlist tight, and note that WeChat has no allowlist today.
   `agents.resume` is a planned follow-up.
 - **Telegram replies stream live**: assistant text is edited into one message
   in place as it is generated, and tool activity is mirrored into a separate
-  status line (e.g. `⏳ 搜索代码…`).
+  status line (e.g. `⏳ Searching code…`).
 - **WeChat shows a "typing…" indicator** (`ilink/bot/sendtyping`) while the
   agent works, then sends a single coalesced progress summary (e.g.
-  `⏳ 搜索代码 → 修改文件`) followed by the final answer. iLink has no
+  `⏳ Searching code → Editing file`) followed by the final answer. iLink has no
   incremental delivery (no in-place edit), so per-token streaming is not
   possible; progress is coalesced to respect the ~7 msgs / 5 min outbound rate
   limit.

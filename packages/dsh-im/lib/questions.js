@@ -9,11 +9,11 @@
 export function renderQuestion(question) {
   const header = typeof question.header === "string" && question.header.trim() !== ""
     ? question.header.trim()
-    : "需要确认";
+    : "Confirmation needed";
   const lines = [`❓ ${header}`, "", question.question ?? ""];
   const options = Array.isArray(question.options) ? question.options : [];
   if (options.length > 0) {
-    lines.push("", "选项：");
+    lines.push("", "Options:");
     for (let i = 0; i < options.length; i += 1) {
       const option = options[i] ?? {};
       const label = typeof option.label === "string" ? option.label : String(option.label ?? "");
@@ -22,9 +22,9 @@ export function renderQuestion(question) {
         : "";
       lines.push(`${i + 1}. ${label}${description}`);
     }
-    lines.push("", "请回复选项编号（如 1）或直接输入你的回答。");
+    lines.push("", "Reply with the option number (e.g. 1) or type your answer.");
   } else {
-    lines.push("", "（直接回复你的回答即可）");
+    lines.push("", "(just reply with your answer)");
   }
   return lines.join("\n");
 }
@@ -46,10 +46,10 @@ function matchOption(input, options) {
   return ci?.label ?? null;
 }
 
-/** Split a multi-select reply into fragments (commas, 、, ;, newlines). */
+/** Split a multi-select reply into fragments (commas, semicolons, newlines). */
 function splitFragments(text) {
   return (text ?? "")
-    .split(/[,，、;\n]+/)
+    .split(/[,;\n]+/)
     .map((fragment) => fragment.trim())
     .filter((fragment) => fragment !== "");
 }

@@ -80,8 +80,8 @@ window.__ModuleLoader__.load({
 
       // ---- Telegram ----
       var teleStatus = telegram && telegram.enabled
-        ? (telegram.connected ? "\u5df2\u8fde\u63a5" : "\u672a\u8fde\u63a5") + (telegram.bot ? " \u00b7 @" + telegram.bot : "")
-        : "\u672a\u542f\u7528";
+        ? (telegram.connected ? "Connected" : "Not connected") + (telegram.bot ? " \u00b7 @" + telegram.bot : "")
+        : "Disabled";
 
       var teleChildren = [
         React.createElement("div", { key: "t", style: titleStyle },
@@ -94,32 +94,32 @@ window.__ModuleLoader__.load({
           React.createElement("div", { key: "in", style: rowStyle },
             React.createElement(P.Input, {
               type: "password", value: token, style: { flex: 1 },
-              placeholder: editing ? "\u8f93\u5165\u65b0 token" : "Bot token \u6765\u81ea @BotFather",
+              placeholder: editing ? "Enter new token" : "Bot token from @BotFather",
               onChange: function (e) { setToken(e.target.value); },
             }),
             React.createElement(P.Button, {
               variant: "primary", size: "sm", disabled: busy,
               onClick: function () { post("/im/telegram", { token: token }); },
-            }, editing ? "\u4fdd\u5b58" : "\u8fde\u63a5")),
+            }, editing ? "Save" : "Connect")),
           editing ? React.createElement(P.Button, {
             key: "cancel", variant: "ghost", size: "sm", disabled: busy,
             onClick: function () { setEditing(false); setToken(""); },
-          }, "\u53d6\u6d88") : null);
+          }, "Cancel") : null);
       } else {
         teleChildren.push(
           React.createElement("div", { key: "cfg", style: rowStyle },
-            React.createElement("span", { style: mutedStyle }, "\u5df2\u914d\u7f6e token"),
-            React.createElement(P.Button, { variant: "ghost", size: "sm", disabled: busy, onClick: function () { setEditing(true); setToken(""); } }, "\u66f4\u6539"),
-            React.createElement(P.Button, { variant: "outline", size: "sm", disabled: busy, onClick: function () { post("/im/telegram", { token: "" }); } }, "\u65ad\u5f00")));
+            React.createElement("span", { style: mutedStyle }, "Token configured"),
+            React.createElement(P.Button, { variant: "ghost", size: "sm", disabled: busy, onClick: function () { setEditing(true); setToken(""); } }, "Change"),
+            React.createElement(P.Button, { variant: "outline", size: "sm", disabled: busy, onClick: function () { post("/im/telegram", { token: "" }); } }, "Disconnect")));
       }
       if (telegram && telegram.error) teleChildren.push(React.createElement("div", { key: "err", style: errStyle }, telegram.error));
 
       // ---- WeChat ----
       var wxStatus = wechat && wechat.loggedIn
-        ? "\u5df2\u8fde\u63a5" + (wechat.userName ? " \u00b7 " + wechat.userName : "")
+        ? "Connected" + (wechat.userName ? " \u00b7 " + wechat.userName : "")
         : wechat && wechat.scanning
-          ? "\u7b49\u5f85\u626b\u7801"
-          : wechat && wechat.enabled ? "\u672a\u8fde\u63a5" : "\u672a\u542f\u7528";
+          ? "Waiting for scan"
+          : wechat && wechat.enabled ? "Not connected" : "Disabled";
 
       var wxChildren = [
         React.createElement("div", { key: "t", style: titleStyle },
@@ -134,15 +134,15 @@ window.__ModuleLoader__.load({
             style: { width: 220, height: 220, borderRadius: 10, border: "1px solid " + T.border },
           }),
           React.createElement("div", { style: { marginTop: 8, fontSize: 12, color: T.textMuted } },
-            "\u7528\u5fae\u4fe1\u626b\u7801\u8fde\u63a5 AI bot")));
+            "Scan with WeChat to connect the AI bot")));
       }
 
       wxChildren.push(React.createElement("div", { key: "btn", style: rowStyle },
         wechat && wechat.loggedIn
-          ? React.createElement(P.Button, { variant: "outline", size: "sm", disabled: busy, onClick: function () { post("/im/wechat/logout"); } }, "\u65ad\u5f00")
-          : React.createElement(P.Button, { variant: "primary", size: "sm", disabled: busy, onClick: function () { post("/im/wechat/start"); } }, "\u626b\u7801\u8fde\u63a5"),
+          ? React.createElement(P.Button, { variant: "outline", size: "sm", disabled: busy, onClick: function () { post("/im/wechat/logout"); } }, "Disconnect")
+          : React.createElement(P.Button, { variant: "primary", size: "sm", disabled: busy, onClick: function () { post("/im/wechat/start"); } }, "Scan to connect"),
         wechat && wechat.enabled && !wechat.loggedIn && !wechat.scanning
-          ? React.createElement("span", { style: mutedStyle }, "\u6b63\u5728\u8fde\u63a5\u4e2d...") : null));
+          ? React.createElement("span", { style: mutedStyle }, "Connecting...") : null));
       if (wechat && wechat.error) wxChildren.push(React.createElement("div", { key: "err", style: errStyle }, wechat.error));
 
       return React.createElement("div", null,

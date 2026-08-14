@@ -203,7 +203,7 @@ export class WeChatChannel {
       switch (st.status) {
         case "confirmed": {
           if (!st.bot_token) {
-            this.#status.setWechat({ scanning: false, qrcode: null, error: "服务器未返回 bot_token" });
+            this.#status.setWechat({ scanning: false, qrcode: null, error: "server did not return bot_token" });
             return;
           }
           this.#creds = {
@@ -220,11 +220,11 @@ export class WeChatChannel {
         case "expired":
         case "binded_redirect":
         case "verify_code_blocked": {
-          this.#status.setWechat({ scanning: false, qrcode: null, error: `连接未完成（${st.status}），请重新扫码` });
+          this.#status.setWechat({ scanning: false, qrcode: null, error: `Connection not completed (${st.status}); please scan again` });
           return;
         }
         case "need_verifycode": {
-          this.#status.setWechat({ error: "微信要求输入配对验证码，暂不支持在面板中输入；请稍后重试" });
+          this.#status.setWechat({ error: "WeChat requires a pairing verification code, which is not supported in the panel yet; please try again later" });
           break;
         }
         case "scaned":
@@ -279,7 +279,7 @@ export class WeChatChannel {
     const contextToken = message.context_token;
     console.log(`[dsh-im] weixin: message from ${fromId}: ${text.slice(0, 120)}`);
 
-    // "正在输入…" while the agent works (WeChat iLink has no streaming).
+    // Show a "typing…" indicator while the agent works (WeChat iLink has no streaming).
     const typing = this.#beginTyping(fromId, contextToken);
     const streamer = new WeChatReplyStreamer(
       (t) => this.#send(fromId, contextToken, t),
@@ -422,7 +422,7 @@ class WeChatReplyStreamer {
   }
 
   onActivity(label) {
-    if (label === this.#lastLabel || label === "思考中…") return;
+    if (label === this.#lastLabel || label === "Thinking…") return;
     this.#lastLabel = label;
     if (this.#labels.length < 10 && !this.#labels.includes(label)) {
       this.#labels.push(label);

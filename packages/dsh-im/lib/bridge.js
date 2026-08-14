@@ -12,19 +12,19 @@ import { parseAnswer, renderQuestion } from "./questions.js";
 const DEFAULT_REPLY_TIMEOUT_MS = 120000;
 const CANCEL_SETTLE_TIMEOUT_MS = 5000;
 
-const TIMEOUT_FALLBACK = "⏳ 处理超时了，我先停止当前任务。请再发一次，或让我换个方式重试。";
+const TIMEOUT_FALLBACK = "⏳ The agent timed out, so I stopped the task. Send it again or let me retry another way.";
 
 /** Human-friendly activity labels for common tools; anything else falls back to the raw name. */
 const ACTIVITY_LABELS = {
-  bash: "执行命令",
-  read: "读取文件",
-  grep: "搜索代码",
-  glob: "查找文件",
-  edit: "修改文件",
-  write: "写入文件",
-  web_search: "搜索网络",
-  ask_user_question: "等待确认",
-  todo_write: "更新任务清单",
+  bash: "Running command",
+  read: "Reading file",
+  grep: "Searching code",
+  glob: "Finding files",
+  edit: "Editing file",
+  write: "Writing file",
+  web_search: "Searching the web",
+  ask_user_question: "Awaiting confirmation",
+  todo_write: "Updating task list",
 };
 
 function activityLabel(name) {
@@ -281,7 +281,7 @@ export class ImBridge {
         fn(value);
       };
       if (this.#questionTimeoutMs > 0) {
-        timer = setTimeout(() => finish(reject, new Error("等待回答超时，已取消本次询问")), this.#questionTimeoutMs);
+        timer = setTimeout(() => finish(reject, new Error("Timed out waiting for an answer; the question was cancelled")), this.#questionTimeoutMs);
         timer.unref?.();
       }
       signal?.addEventListener("abort", onAbort, { once: true });
@@ -400,7 +400,7 @@ export class ImBridge {
           emit(sink, "onChunk", chunk.text);
         } else if (chunk?.type === "reasoning-delta" && !streamState.thinkingShown) {
           streamState.thinkingShown = true;
-          emit(sink, "onActivity", "思考中…");
+          emit(sink, "onActivity", "Thinking…");
         }
         break;
       }
@@ -488,7 +488,7 @@ export class ImBridge {
       if (command != null) {
         // A slash command while a question is pending is an escape hatch: cancel
         // the question so the turn settles, then run the command below.
-        waiter.reject(new Error("等待回答时收到命令，已取消询问"));
+        waiter.reject(new Error("Received a command while waiting for an answer; cancelled the question"));
       } else {
         waiter.resolve(text);
         return Promise.resolve(text);
@@ -526,25 +526,25 @@ export class ImBridge {
       case "restart":
         return this.#restartReply();
       default:
-        return `未知命令 /${name}。发送 /help 查看可用命令。`;
+        return `Unknown command /${name}. Send /help to see available commands.`;
     }
   }
 
   #helpText() {
     return [
-      "IM Bridge 命令：",
-      "/help — 显示本帮助",
-      "/model — 查看当前模型与可用模型",
-      "/model <provider>/<model> — 切换本会话模型（如 /model deepseek-official/deepseek-v4-flash）",
-      "/model reset — 恢复默认模型",
-      "/new（或 /reset）— 清空本会话，开始新对话",
-      "/restart — 重启 dsh web 进程（重启后即可继续对话）",
+      "IM Bridge commands:",
+      "/help — show this help",
+      "/model — show the current model and available models",
+      "/model <provider>/<model> — switch this chat's model (e.g. /model deepseek-official/deepseek-v4-flash)",
+      "/model reset — restore the default model",
+      "/new (or /reset) — clear this chat and start a new conversation",
+      "/restart — restart the dsh web process (continue chatting after it's back)",
     ].join("\n");
   }
 
   #restartReply() {
-    if (!this.#restartEnabled) return "重启命令已被禁用（restartEnabled: false）。";
-    return "正在重启 dsh web… 稍等片刻后即可继续对话。";
+    if (!this.#restartEnabled) return "The restart command is disabled (restartEnabled: false).";
+    return "Restarting dsh web… give it a moment, then continue chatting.";
   }
 
   /** Send a command reply through the sink and await its delivery. */
@@ -626,31 +626,31 @@ export class ImBridge {
     const current = this.#currentSelection(peerKey);
     const groups = await this.#loadCatalog();
     const lines = [];
-    lines.push(`当前模型：${current?.provider ?? "?"}/${current?.model ?? "?"}`);
+    lines.push(`Current model: ${current?.provider ?? "?"}/${current?.model ?? "?"}`);
     lines.push("");
-    lines.push("可用模型：");
+    lines.push("Available models:");
     if (groups.length === 0) {
-      lines.push("（模型服务不可用，无法列出模型）");
+      lines.push("(model service unavailable; cannot list models)");
     }
     for (const { provider, models, error } of groups) {
       if (models.length === 0) {
-        lines.push(`• ${provider.name}（${provider.id}）${error ? `：${error}` : "：无可用模型"}`);
+        lines.push(`• ${provider.name} (${provider.id})${error ? `: ${error}` : ": no models available"}`);
         continue;
       }
-      lines.push(`• ${provider.name}（${provider.id}）`);
+      lines.push(`• ${provider.name} (${provider.id})`);
       for (const model of models) {
         const mark = current?.provider === provider.id && current?.model === model.id ? " ✓" : "";
         lines.push(`    - ${model.id}${mark}`);
       }
     }
     lines.push("");
-    lines.push("切换：/model <provider>/<model> 或 /model <model>");
-    lines.push("重置：/model reset");
+    lines.push("Switch: /model <provider>/<model> or /model <model>");
+    lines.push("Reset: /model reset");
     return lines.join("\n");
   }
 
   async #switchModel(peerKey, arg) {
-    if (this.#llm == null) return "模型服务不可用，无法切换。";
+    if (this.#llm == null) return "Model service unavailable; cannot switch.";
     let provider;
     let model;
     if (arg.includes("/")) {
@@ -661,10 +661,10 @@ export class ImBridge {
       model = arg;
       provider = await this.#findProviderForModel(model);
       if (provider === undefined) {
-        return `找不到模型 "${model}"。发送 /model 查看可用模型。`;
+        return `Model "${model}" not found. Send /model to see available models.`;
       }
     }
-    if (provider === "" || model === "") return `用法：/model <provider>/<model>（如 /model deepseek-official/deepseek-v4-pro）。`;
+    if (provider === "" || model === "") return `Usage: /model <provider>/<model> (e.g. /model deepseek-official/deepseek-v4-pro).`;
     try {
       const { config } = await this.#llm.resolveCallConfig({ provider, model });
       const selected = {
@@ -675,9 +675,9 @@ export class ImBridge {
       this.#modelOverridesByPeer.set(peerKey, selected);
       const holder = this.#holdersByPeer.get(peerKey);
       if (holder != null) holder.current = selected;
-      return `已切换到 ${selected.provider}/${selected.model}。仅对本会话生效。`;
+      return `Switched to ${selected.provider}/${selected.model}. Applies to this chat only.`;
     } catch (error) {
-      return `切换失败：${error?.message ?? String(error)}`;
+      return `Switch failed: ${error?.message ?? String(error)}`;
     }
   }
 
@@ -693,7 +693,7 @@ export class ImBridge {
 
   async #resetCommand(peerKey) {
     await this.#resetPeer(peerKey);
-    return "已开始新会话，历史已清空。";
+    return "Started a new conversation; history cleared.";
   }
 
   /** Drop the peer's live agent (and its model holder) so the next message mints a fresh one. */
@@ -703,7 +703,7 @@ export class ImBridge {
     this.#holdersByPeer.delete(peerKey);
     // Cancel a pending follow-up question and drop turn state so a stale answer
     // cannot misroute or wedge the reset.
-    this.#questionWaitersByPeer.get(peerKey)?.reject(new Error("会话已重置"));
+    this.#questionWaitersByPeer.get(peerKey)?.reject(new Error("Conversation reset"));
     this.#turnsByPeer.delete(peerKey);
     if (pending == null) return;
     try {
@@ -756,19 +756,19 @@ function summarizeTurn(events, firstSeq) {
 function fallbackForTurnReason(reason) {
   switch (reason?.kind) {
     case "error": {
-      const detail = reason.error?.message ?? "未知错误";
-      return `⚠️ 处理失败：${detail}`;
+      const detail = reason.error?.message ?? "unknown error";
+      return `⚠️ Failed: ${detail}`;
     }
     case "aborted":
-      return "⚠️ 回复已取消，请重新发送一次。";
+      return "⚠️ The reply was cancelled. Please send it again.";
     case "interrupted":
-      return "⚠️ 回复被打断，请重新发送一次。";
+      return "⚠️ The reply was interrupted. Please send it again.";
     case "blocked":
-      return "⚠️ 回复被拦截，请换一种问法或稍后重试。";
+      return "⚠️ The reply was blocked. Please rephrase or try again later.";
     case "max-tokens":
-      return "⚠️ 回复超出长度限制，请缩小问题范围后重试。";
+      return "⚠️ The reply exceeded the length limit. Please narrow the scope and retry.";
     case "completed":
     default:
-      return "我已经处理完了，但这次没有生成可发送的回复。请再问我一次或换个问法。";
+      return "I finished, but no sendable reply was produced this time. Please ask again or rephrase.";
   }
 }
