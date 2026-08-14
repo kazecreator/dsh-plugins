@@ -1,6 +1,6 @@
 {
   "name": "@kazecreator/dsh-im",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "DeepSeek Harness IM bridge plugin: route Telegram & WeChat messages into per-peer agent sessions and reply back",
   "keywords": [
     "dsh",
