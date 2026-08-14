@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+- `/restart` now sends exactly one acknowledgement in the conversation's language
+  and a proactive "restart complete" message once the requesting peer's channel
+  reconnects. The Telegram `getUpdates` offset and the WeChat `get_updates_buf`
+  cursor are persisted so a relaunch no longer re-delivers (and re-runs) already
+  processed messages, which previously produced a duplicate restart notice in
+  the wrong language.
+
 ## 0.2.0 — 2026-08-14
 
 - Persist each peer's session id and resume the session on boot, so IM

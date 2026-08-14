@@ -9,6 +9,7 @@ import { SessionId } from "@deepseek-ai/dsh-session";
 import { parseCommand } from "./commands.js";
 import { parseAnswer, renderQuestion } from "./questions.js";
 import { detectLanguage, t } from "./i18n.js";
+import { saveRestartNotice } from "./restart-notice.js";
 
 const DEFAULT_REPLY_TIMEOUT_MS = 120000;
 const CANCEL_SETTLE_TIMEOUT_MS = 5000;
@@ -558,7 +559,7 @@ export class ImBridge {
       if (command != null) {
         const replyText = await this.#runCommand(peerKey, command, lang);
         if (replyText !== "") await this.#replyNow(resolvedSink, replyText);
-        if (command.name === "restart" && this.#restartEnabled) this.#restartProcess();
+        if (command.name === "restart" && this.#restartEnabled) this.#restartProcess(provider, peerId, lang);
         return replyText;
       }
       const { agent } = await this.#acquireAgent(peerKey);
@@ -621,8 +622,12 @@ export class ImBridge {
    * already been delivered, so a channel reply lands before the restart. We
    * only exit after the child reports a successful `spawn`, so a failed launch
    * leaves the bridge running instead of silently going down.
+   *
+   * Before relaunching, persist a restart notice so the new process can send a
+   * proactive "restart complete" message to the requesting peer once its
+   * channel reconnects.
    */
-  #restartProcess() {
+  #restartProcess(provider, peerId, lang) {
     const args = process.argv.slice(1);
     console.log("[dsh-im] restarting dsh web process:", process.execPath, ...args);
     let child;
@@ -639,6 +644,7 @@ export class ImBridge {
     }
     child.on("spawn", () => {
       console.log("[dsh-im] restart child launched; exiting");
+      saveRestartNotice({ provider, peerId, lang });
       setTimeout(() => process.exit(0), 250);
     });
     child.on("error", (error) => {

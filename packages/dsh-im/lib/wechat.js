@@ -5,6 +5,7 @@ import { dirname, join } from "node:path";
 import QRCode from "qrcode";
 import { markdownToPlainText, splitPlainTextBytes } from "./markdown.js";
 import { detectLanguage, t } from "./i18n.js";
+import { takeRestartNotice } from "./restart-notice.js";
 
 /**
  * WeChat channel over the official Tencent OpenClaw Weixin protocol
@@ -59,6 +60,30 @@ function clearCredentials() {
     if (existsSync(credentialsPath())) writeFileSync(credentialsPath(), "");
   } catch {
     /* ignore */
+  }
+}
+
+/** Persisted `get_updates_buf` cursor, so a restart does not re-deliver old messages. */
+function cursorPath() {
+  const home = process.env.DSH_HOME ?? join(homedir(), ".dsh");
+  return join(home, "storages", "dsh-im", "wechat-cursor.json");
+}
+
+function loadCursor() {
+  try {
+    const buf = JSON.parse(readFileSync(cursorPath(), "utf8"))?.buf;
+    return typeof buf === "string" ? buf : "";
+  } catch {
+    return "";
+  }
+}
+
+function saveCursor(buf) {
+  try {
+    mkdirSync(dirname(cursorPath()), { recursive: true });
+    writeFileSync(cursorPath(), JSON.stringify({ buf }) + "\n");
+  } catch (error) {
+    console.error("[dsh-im] failed to save wechat cursor:", error?.message ?? error);
   }
 }
 
@@ -152,7 +177,7 @@ export class WeChatChannel {
   #getUiLang;
   #abort = new AbortController();
   #creds = null;
-  #getUpdatesBuf = "";
+  #getUpdatesBuf;
   #polling = false;
   #typingTickets = new Map();
   #typingTimers = new Set();
@@ -162,6 +187,7 @@ export class WeChatChannel {
     this.#bridge = bridge;
     this.#status = status;
     this.#getUiLang = getUiLang;
+    this.#getUpdatesBuf = loadCursor();
   }
 
   get enabled() {
@@ -175,6 +201,9 @@ export class WeChatChannel {
     if (this.#creds && this.#creds.botToken) {
       this.#status.setWechat({ loggedIn: true, userName: this.#creds.botId ?? this.#creds.userId ?? null });
       this.#startPolling();
+      this.#sendRestartNotice().catch((error) => {
+        console.error("[dsh-im] failed to send wechat restart notice:", error?.message ?? error);
+      });
     } else {
       this.#startLogin().catch((error) => {
         console.error("[dsh-im] weixin login failed:", error);
@@ -257,6 +286,13 @@ export class WeChatChannel {
     });
   }
 
+  /** Deliver a pending "restart complete" notice to the peer who asked for it. */
+  async #sendRestartNotice() {
+    const notice = takeRestartNotice("wechat");
+    if (notice == null) return;
+    await this.#send(notice.peerId, undefined, t(notice.lang ?? "en", "restart.done"));
+  }
+
   async #poll() {
     while (!this.#abort.signal.aborted) {
       try {
@@ -268,6 +304,7 @@ export class WeChatChannel {
         for (const message of resp.msgs ?? []) {
           this.#handleMessage(message);
         }
+        saveCursor(this.#getUpdatesBuf);
       } catch (error) {
         // Only a channel stop aborts the loop. A client-side long-poll timeout
         // (AbortError from the 45s backstop) or a transient network error just

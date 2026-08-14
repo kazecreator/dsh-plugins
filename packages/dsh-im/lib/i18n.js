@@ -41,6 +41,7 @@ const STRINGS = {
     "help.restart": "/restart — restart the dsh web process (continue chatting after it's back)",
     "restart.disabled": "The restart command is disabled (restartEnabled: false).",
     "restart.ack": "Restarting dsh web… give it a moment, then continue chatting.",
+    "restart.done": "✅ Restart complete — I'm back. Go ahead.",
 
     // Model commands (bridge.js)
     "model.current": "Current model: {provider}/{model}",
@@ -124,6 +125,7 @@ const STRINGS = {
     "help.restart": "/restart — 重启 dsh web 进程（重启后即可继续对话）",
     "restart.disabled": "重启命令已被禁用（restartEnabled: false）。",
     "restart.ack": "正在重启 dsh web… 稍等片刻后即可继续对话。",
+    "restart.done": "✅ 重启完成，我已回来，可以继续对话。",
 
     "model.current": "当前模型：{provider}/{model}",
     "model.available": "可用模型：",

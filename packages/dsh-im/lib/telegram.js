@@ -1,9 +1,37 @@
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { dirname, join } from "node:path";
 import { markdownToPlainText, markdownToTelegramHtml, splitPlainText } from "./markdown.js";
 import { t } from "./i18n.js";
+import { takeRestartNotice } from "./restart-notice.js";
 
 const JSON_HEADERS = { "Content-Type": "application/json" };
 /** Telegram `sendMessage` text limit (UTF-16 code units). */
 const TELEGRAM_TEXT_LIMIT = 4096;
+
+/** Persisted `getUpdates` offset, so a restart does not re-deliver old updates. */
+function offsetPath() {
+  const home = process.env.DSH_HOME ?? join(homedir(), ".dsh");
+  return join(home, "storages", "dsh-im", "telegram-offset.json");
+}
+
+function loadOffset() {
+  try {
+    const n = Number(JSON.parse(readFileSync(offsetPath(), "utf8"))?.offset);
+    return Number.isInteger(n) && n >= 0 ? n : 0;
+  } catch {
+    return 0;
+  }
+}
+
+function saveOffset(offset) {
+  try {
+    mkdirSync(dirname(offsetPath()), { recursive: true });
+    writeFileSync(offsetPath(), JSON.stringify({ offset }) + "\n");
+  } catch (error) {
+    console.error("[dsh-im] failed to save telegram offset:", error?.message ?? error);
+  }
+}
 
 /**
  * Telegram Bot API channel via long polling (`getUpdates` + `sendMessage`).
@@ -16,13 +44,14 @@ export class TelegramChannel {
   #status;
   #getUiLang;
   #abort = new AbortController();
-  #offset = 0;
+  #offset;
 
   constructor(config, bridge, status, getUiLang) {
     this.#config = config;
     this.#bridge = bridge;
     this.#status = status;
     this.#getUiLang = getUiLang;
+    this.#offset = loadOffset();
   }
 
   get token() {
@@ -72,6 +101,19 @@ export class TelegramChannel {
       console.error("[dsh-im] telegram poll stopped:", error);
       this.#status?.setTelegram({ connected: false, error: error?.message ?? String(error) });
     });
+    this.#sendRestartNotice().catch((error) => {
+      console.error("[dsh-im] failed to send telegram restart notice:", error?.message ?? error);
+    });
+  }
+
+  /** Deliver a pending "restart complete" notice to the peer who asked for it. */
+  async #sendRestartNotice() {
+    const notice = takeRestartNotice("telegram");
+    if (notice == null) return;
+    await this.#call("sendMessage", {
+      chat_id: notice.peerId,
+      text: t(notice.lang ?? "en", "restart.done"),
+    });
   }
 
   async #getMe() {
@@ -95,6 +137,7 @@ export class TelegramChannel {
           if (typeof message.text !== "string") continue;
           this.#handleMessage(message);
         }
+        if (updates.length > 0) saveOffset(this.#offset);
       } catch (error) {
         if (this.#abort.signal.aborted || error?.name === "AbortError") break;
         // Transient (network hiccup, a competing getUpdates such as a deploy or

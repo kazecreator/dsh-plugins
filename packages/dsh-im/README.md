@@ -146,7 +146,11 @@ it reflects whatever providers/adapters the profile currently has registered.
 and exits, so it works however dsh was launched (`dsh web`, `npm exec`, `npx`).
 The reply is delivered **before** the process exits; the child only triggers the
 parent's exit after it reports a successful spawn, so a failed relaunch leaves
-the bridge running. Because a restart tears down the live agents and takes a few
+the bridge running. The Telegram `getUpdates` offset and the WeChat
+`get_updates_buf` cursor are persisted, so the relaunched process does not
+re-deliver messages that were already processed. Once the requesting peer's
+channel reconnects, the bridge sends a "restart complete" message back to that
+peer proactively. Because a restart tears down the live agents and takes a few
 seconds (each peer's conversation history is resumed, not dropped), it is a DoS
 surface: keep Telegram's `telegramAllowedUserIds` allowlist tight, and note that
 WeChat has no allowlist today.
