@@ -158,10 +158,11 @@ allowlist tight, and note that WeChat has no allowlist today.
   HTML (headings, lists, code blocks, tables) and falls back to plain text if
   HTML fails; WeChat converts markdown to readable plain text (iLink has no
   markup support).
-- **The bridge's own messages follow the conversation language.** Activity
-  labels, command replies, follow-up question prompts, and status text are shown
-  in Chinese when you chat in Chinese, and English otherwise (auto-detected per
-  chat).
+- **Messages follow two language sources.** Activity labels, command replies,
+  and follow-up question prompts follow the conversation language (Chinese when
+  you chat in Chinese, English otherwise, auto-detected per chat). The web panel
+  and channel scan/status prompts follow the language selected in the DSH web
+  UI.
 - In Web profiles the bridge joins the active/default agent preset so code
   search and other tools behave like a normal Web session. The `agentReplyTimeoutMs`
   above is an **idle** watchdog (reset on every new event), so it keeps a stuck

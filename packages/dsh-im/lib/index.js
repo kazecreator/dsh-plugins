@@ -53,6 +53,7 @@ class ImController {
   #configPath;
   #telegram = null;
   #wechat = null;
+  #uiLang = "en";
 
   constructor(ctx, patchConfig) {
     this.#ctx = ctx;
@@ -89,6 +90,19 @@ class ImController {
     }
   }
 
+  /** Read the UI language from a request query string (`?lang=zh|en`). */
+  #readLang(req) {
+    try {
+      const lang = new URL(req.url ?? "", "http://localhost").searchParams.get("lang");
+      if (lang === "zh" || lang === "en") this.#uiLang = lang;
+    } catch {
+      // Ignore malformed URLs.
+    }
+  }
+
+  /** Current UI language for channel status/scan strings. */
+  #getUiLang = () => this.#uiLang;
+
   start() {
     this.#status.setTelegram({ enabled: this.effectiveConfig().telegramEnabled === true });
     this.#status.setWechat({ enabled: this.effectiveConfig().wechatEnabled === true });
@@ -100,7 +114,7 @@ class ImController {
   #startTelegram() {
     if (this.#telegram != null) this.#telegram.stop();
     const config = this.effectiveConfig();
-    this.#telegram = new TelegramChannel(config, this.#bridge, this.#status);
+    this.#telegram = new TelegramChannel(config, this.#bridge, this.#status, this.#getUiLang);
     this.#telegram.start();
   }
 
@@ -109,7 +123,7 @@ class ImController {
       this.#wechat.stop();
     }
     const config = this.effectiveConfig();
-    this.#wechat = new WeChatChannel(config, this.#bridge, this.#status);
+    this.#wechat = new WeChatChannel(config, this.#bridge, this.#status, this.#getUiLang);
     this.#wechat.start().catch((error) => {
       console.error("[dsh-im] wechat start failed:", error);
       this.#status.setWechat({ error: error?.message ?? String(error) });
@@ -176,6 +190,7 @@ class ImController {
           res.end();
           return;
         }
+        this.#readLang(req);
         this.sendJson(res, this.statusPayload());
       },
     });
@@ -190,6 +205,7 @@ class ImController {
           return;
         }
         try {
+          this.#readLang(req);
           const body = await readJson(req);
           this.setTelegramToken(body.token ?? "");
           this.sendJson(res, this.statusPayload());
@@ -208,6 +224,7 @@ class ImController {
           res.end();
           return;
         }
+        this.#readLang(req);
         this.startWeChat();
         this.sendJson(res, this.statusPayload());
       },
@@ -222,6 +239,7 @@ class ImController {
           res.end();
           return;
         }
+        this.#readLang(req);
         this.logoutWeChat();
         this.sendJson(res, this.statusPayload());
       },

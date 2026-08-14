@@ -67,6 +67,9 @@ window.__ModuleLoader__.load({
     function t(key) {
       return (UI[uiLang] && UI[uiLang][key]) || UI.en[key] || key;
     }
+    function withLang(url) {
+      return url + (url.indexOf("?") >= 0 ? "&" : "?") + "lang=" + encodeURIComponent(uiLang);
+    }
 
     function Dot(color) {
       return React.createElement("span", {
@@ -86,7 +89,7 @@ window.__ModuleLoader__.load({
       React.useEffect(function () {
         var disposed = false;
         var load = function () {
-          fetch("/im/status")
+          fetch(withLang("/im/status"))
             .then(function (r) { return r.ok ? r.json() : null; })
             .then(function (d) { if (d && !disposed) setStatus(d); })
             .catch(function () {});
@@ -112,7 +115,7 @@ window.__ModuleLoader__.load({
 
       var post = function (url, body) {
         setBusy(true);
-        return fetch(url, {
+        return fetch(withLang(url), {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: body === undefined ? undefined : JSON.stringify(body),
@@ -204,6 +207,17 @@ window.__ModuleLoader__.load({
     // --- cordis client plugin ----------------------------------------------
     var inject = ["slots"];
     function apply(ctx) {
+      // Track the DSH UI locale (host-backed preference) so the panel and the
+      // channel scan/status strings follow the language selected in the web UI.
+      var locale = ctx.get("locale");
+      var syncLang = function () {
+        if (!locale || typeof locale.getLocale !== "function") return;
+        var snap = locale.getLocale();
+        if (snap && snap.active) uiLang = snap.active === "zh" ? "zh" : "en";
+      };
+      syncLang();
+      if (locale && typeof locale.subscribe === "function") locale.subscribe(syncLang);
+
       ctx.slots.inject("settings.section", function () {
         return ctx.slots.register({
           name: "settings.section",

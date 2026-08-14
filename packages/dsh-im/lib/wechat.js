@@ -143,6 +143,7 @@ export class WeChatChannel {
   #config;
   #bridge;
   #status;
+  #getUiLang;
   #abort = new AbortController();
   #creds = null;
   #getUpdatesBuf = "";
@@ -150,10 +151,11 @@ export class WeChatChannel {
   #typingTickets = new Map();
   #typingTimers = new Set();
 
-  constructor(config, bridge, status) {
+  constructor(config, bridge, status, getUiLang) {
     this.#config = config;
     this.#bridge = bridge;
     this.#status = status;
+    this.#getUiLang = getUiLang;
   }
 
   get enabled() {
@@ -205,7 +207,7 @@ export class WeChatChannel {
       switch (st.status) {
         case "confirmed": {
           if (!st.bot_token) {
-            this.#status.setWechat({ scanning: false, qrcode: null, error: t("en", "wechat.noBotToken") });
+            this.#status.setWechat({ scanning: false, qrcode: null, error: t(this.#getUiLang?.() ?? "en", "wechat.noBotToken") });
             return;
           }
           this.#creds = {
@@ -222,11 +224,11 @@ export class WeChatChannel {
         case "expired":
         case "binded_redirect":
         case "verify_code_blocked": {
-          this.#status.setWechat({ scanning: false, qrcode: null, error: t("en", "wechat.connectIncomplete", { status: st.status }) });
+          this.#status.setWechat({ scanning: false, qrcode: null, error: t(this.#getUiLang?.() ?? "en", "wechat.connectIncomplete", { status: st.status }) });
           return;
         }
         case "need_verifycode": {
-          this.#status.setWechat({ error: t("en", "wechat.verifyCode") });
+          this.#status.setWechat({ error: t(this.#getUiLang?.() ?? "en", "wechat.verifyCode") });
           break;
         }
         case "scaned":

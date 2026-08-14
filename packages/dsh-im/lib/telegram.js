@@ -1,5 +1,5 @@
 import { markdownToPlainText, markdownToTelegramHtml } from "./markdown.js";
-import { detectLanguage, t } from "./i18n.js";
+import { t } from "./i18n.js";
 
 const JSON_HEADERS = { "Content-Type": "application/json" };
 
@@ -12,13 +12,15 @@ export class TelegramChannel {
   #config;
   #bridge;
   #status;
+  #getUiLang;
   #abort = new AbortController();
   #offset = 0;
 
-  constructor(config, bridge, status) {
+  constructor(config, bridge, status, getUiLang) {
     this.#config = config;
     this.#bridge = bridge;
     this.#status = status;
+    this.#getUiLang = getUiLang;
   }
 
   get token() {
@@ -130,7 +132,7 @@ export class TelegramChannel {
     sendTyping();
     const typingTimer = setInterval(sendTyping, 4000);
 
-    const streamer = new TelegramReplyStreamer(message.chat.id, (method, body) => this.#call(method, body), detectLanguage(text));
+    const streamer = new TelegramReplyStreamer(message.chat.id, (method, body) => this.#call(method, body), this.#getUiLang?.() ?? "en");
 
     this.#bridge.handleInbound({
       provider: "telegram",
