@@ -1,0 +1,34 @@
+# Example patch layer for @kaze/dsh-im. Merge the `insert` block below into
+# $DSH_HOME/profiles/<profile>/cordis.patch.yml (it is a top-level YAML array).
+#
+# Both channels are disabled by default, so the bridge mounts inert until you
+# opt in. Uncomment/edit what you need, then restart the profile.
+
+- insert:
+    - id: dsh-im
+      name: '@kaze/dsh-im'
+      config:
+        # --- Agent ---
+        # agentPreset: ''
+        # Idle-silence timeout (ms): cancels the turn only when the agent emits
+        # no events for this long. Long research/code tasks that keep producing
+        # progress are not cut off. Set 0 to disable.
+        # agentReplyTimeoutMs: 120000
+        # How long (ms) to wait for an answer to a follow-up question before
+        # giving up; 0 (default) waits indefinitely.
+        # questionTimeoutMs: 0
+        # Enable inline slash commands (/help, /model, /new). Defaults to true.
+        # commandsEnabled: true
+        # Allow /restart to relaunch this dsh web process. Defaults to true.
+        # restartEnabled: true
+
+        # --- Telegram ---
+        telegramEnabled: false
+        telegramBotToken: ''
+        # Optional allowlist of sender ids; empty = allow everyone.
+        # telegramAllowedUserIds: ['123456789']
+        # telegramPollingTimeout: 30
+        # telegramApiBase: 'https://api.telegram.org'
+
+        # --- WeChat ---
+        wechatEnabled: false
