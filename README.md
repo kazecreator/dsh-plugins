@@ -11,6 +11,8 @@ web UI. Each chat runs its own agent session, replies stream back live, and when
 the agent needs to ask you something it sends the question (with numbered
 options) as a normal message you can answer.
 
+Published on npm as [`@kazecreator/dsh-im`](https://www.npmjs.com/package/@kazecreator/dsh-im).
+
 [Install & configure →](./packages/dsh-im/README.md)
 
 ## Install a plugin

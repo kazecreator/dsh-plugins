@@ -1,5 +1,8 @@
 # @kazecreator/dsh-im
 
+[![npm version](https://img.shields.io/npm/v/@kazecreator/dsh-im)](https://www.npmjs.com/package/@kazecreator/dsh-im)
+[![license](https://img.shields.io/badge/license-MIT-blue)](https://github.com/kazecreator/dsh-plugins/blob/main/LICENSE)
+
 DeepSeek Harness **IM bridge plugin**: route inbound **Telegram** and **WeChat**
 messages into per-peer agent sessions and send the agent's reply back to the
 originating chat. Each `provider:peerId` pair gets its own live DSH Agent, so

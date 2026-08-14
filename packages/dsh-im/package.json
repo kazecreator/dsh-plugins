@@ -24,6 +24,7 @@
   "files": [
     "lib",
     "README.md",
+    "CHANGELOG.md",
     "example.cordis.patch.yml"
   ],
   "dsh": {
