@@ -37,11 +37,16 @@ const STRINGS = {
     "help.model": "/model — show the current model and available models",
     "help.modelSwitch": "/model <provider>/<model> — switch this chat's model (e.g. /model deepseek-official/deepseek-v4-flash)",
     "help.modelReset": "/model reset — restore the default model",
+    "help.effort": "/effort — show or set reasoning effort (off / high / max)",
     "help.new": "/new (or /reset) — clear this chat and start a new conversation",
+    "help.stop": "/stop — stop the current turn / cancel what's running",
     "help.restart": "/restart — restart the dsh web process (continue chatting after it's back)",
     "restart.disabled": "The restart command is disabled (restartEnabled: false).",
     "restart.ack": "Restarting dsh web… give it a moment, then continue chatting.",
     "restart.done": "✅ Restart complete — I'm back. Go ahead.",
+    "stop.idle": "Nothing is running in this chat.",
+    "stop.ack": "Stopped the current turn.",
+    "stop.failed": "Failed to stop: {error}",
 
     // Model commands (bridge.js)
     "model.current": "Current model: {provider}/{model}",
@@ -55,6 +60,14 @@ const STRINGS = {
     "model.usage": "Usage: /model <provider>/<model> (e.g. /model deepseek-official/deepseek-v4-pro).",
     "model.switched": "Switched to {provider}/{model}. Applies to this chat only.",
     "model.switchFailed": "Switch failed: {error}",
+    "effort.current": "Current reasoning effort: {effort}",
+    "effort.options": "Options:",
+    "effort.off": "no thinking (fastest)",
+    "effort.high": "balanced (default)",
+    "effort.max": "strongest (slowest, most thorough)",
+    "effort.set": "Reasoning effort set to {effort} (this chat only).",
+    "effort.unknown": "Unknown effort \"{effort}\". Use off / high / max.",
+    "effort.hint": "Set: /effort off|high|max",
     "reset.done": "Started a new conversation; history cleared.",
 
     // Turn fallback reasons (bridge.js)
@@ -76,9 +89,6 @@ const STRINGS = {
     "wechat.noBotToken": "server did not return bot_token",
     "wechat.connectIncomplete": "Connection not completed ({status}); please scan again",
     "wechat.verifyCode": "WeChat requires a pairing verification code, which is not supported in the panel yet; please try again later",
-
-    // Channel status (telegram.js)
-    "status.done": "✅ Done",
 
     // Web UI panel (client.js)
     "ui.connected": "Connected",
@@ -121,11 +131,16 @@ const STRINGS = {
     "help.model": "/model — 查看当前模型与可用模型",
     "help.modelSwitch": "/model <provider>/<model> — 切换本会话模型（如 /model deepseek-official/deepseek-v4-flash）",
     "help.modelReset": "/model reset — 恢复默认模型",
+    "help.effort": "/effort — 查看或设置思考强度（off / high / max）",
     "help.new": "/new（或 /reset）— 清空本会话，开始新对话",
+    "help.stop": "/stop — 停止当前正在进行的对话/任务",
     "help.restart": "/restart — 重启 dsh web 进程（重启后即可继续对话）",
     "restart.disabled": "重启命令已被禁用（restartEnabled: false）。",
     "restart.ack": "正在重启 dsh web… 稍等片刻后即可继续对话。",
     "restart.done": "✅ 重启完成，我已回来，可以继续对话。",
+    "stop.idle": "当前没有正在进行的对话或任务。",
+    "stop.ack": "已停止当前对话。",
+    "stop.failed": "停止失败：{error}",
 
     "model.current": "当前模型：{provider}/{model}",
     "model.available": "可用模型：",
@@ -138,6 +153,14 @@ const STRINGS = {
     "model.usage": "用法：/model <provider>/<model>（如 /model deepseek-official/deepseek-v4-pro）。",
     "model.switched": "已切换到 {provider}/{model}。仅对本会话生效。",
     "model.switchFailed": "切换失败：{error}",
+    "effort.current": "当前思考强度：{effort}",
+    "effort.options": "可选：",
+    "effort.off": "关闭思考（最快）",
+    "effort.high": "中等（默认）",
+    "effort.max": "最强（最慢、最充分）",
+    "effort.set": "已设置思考强度为 {effort}，仅对本会话生效。",
+    "effort.unknown": "未知的思考强度 \"{effort}\"。可用：off / high / max。",
+    "effort.hint": "设置：/effort off|high|max",
     "reset.done": "已开始新会话，历史已清空。",
 
     "fallback.errorDetail": "未知错误",
@@ -156,8 +179,6 @@ const STRINGS = {
     "wechat.noBotToken": "服务器未返回 bot_token",
     "wechat.connectIncomplete": "连接未完成（{status}），请重新扫码",
     "wechat.verifyCode": "微信要求输入配对验证码，暂不支持在面板中输入；请稍后重试",
-
-    "status.done": "✅ 完成",
 
     "ui.connected": "已连接",
     "ui.notConnected": "未连接",

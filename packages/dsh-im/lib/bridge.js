@@ -561,11 +561,19 @@ export class ImBridge {
    * @param {{provider: string, peerId: string, text: string, sink?: object, reply?: (text: string) => Promise<unknown>}} input
    * @returns {Promise<string>} the assistant reply text.
    */
-  handleInbound({ provider, peerId, text, sink, reply }) {
+  handleInbound({ provider, peerId, text, sink, reply, route }) {
     const peerKey = this.#peerKey(provider, peerId);
     const resolvedSink = normalizeSink(sink, reply);
     const command = this.#commandsEnabled ? parseCommand(text) : null;
     const lang = this.#resolveLang(peerKey, text);
+
+    // /stop interrupts the active turn immediately instead of queueing behind it.
+    if (command?.name === "stop") {
+      return this.#stopPeer(peerKey, lang).then(async (replyText) => {
+        await this.#replyNow(resolvedSink, replyText);
+        return replyText;
+      });
+    }
 
     // A follow-up question is awaiting this peer's next message. Answer it
     // directly rather than queueing a turn behind the (blocked) asking turn.
@@ -586,7 +594,7 @@ export class ImBridge {
       if (command != null) {
         const replyText = await this.#runCommand(peerKey, command, lang);
         if (replyText !== "") await this.#replyNow(resolvedSink, replyText);
-        if (command.name === "restart" && this.#restartEnabled) this.#restartProcess(provider, peerId, lang);
+        if (command.name === "restart" && this.#restartEnabled) this.#restartProcess(provider, route ?? { peerId }, lang);
         return replyText;
       }
       const { agent } = await this.#acquireAgent(peerKey);
@@ -606,6 +614,8 @@ export class ImBridge {
         return this.#helpText(lang);
       case "model":
         return await this.#modelCommand(peerKey, args, lang);
+      case "effort":
+        return await this.#effortCommand(peerKey, args, lang);
       case "new":
       case "reset":
         return await this.#resetCommand(peerKey, lang);
@@ -623,7 +633,9 @@ export class ImBridge {
       t(lang, "help.model"),
       t(lang, "help.modelSwitch"),
       t(lang, "help.modelReset"),
+      t(lang, "help.effort"),
       t(lang, "help.new"),
+      t(lang, "help.stop"),
       t(lang, "help.restart"),
     ].join("\n");
   }
@@ -654,7 +666,7 @@ export class ImBridge {
    * proactive "restart complete" message to the requesting peer once its
    * channel reconnects.
    */
-  #restartProcess(provider, peerId, lang) {
+  #restartProcess(provider, route, lang) {
     const args = process.argv.slice(1);
     console.log("[dsh-im] restarting dsh web process:", process.execPath, ...args);
     let child;
@@ -671,7 +683,7 @@ export class ImBridge {
     }
     child.on("spawn", () => {
       console.log("[dsh-im] restart child launched; exiting");
-      saveRestartNotice({ provider, peerId, lang });
+      saveRestartNotice({ provider, route, lang });
       setTimeout(() => process.exit(0), 250);
     });
     child.on("error", (error) => {
@@ -772,6 +784,34 @@ export class ImBridge {
     }
   }
 
+  /** Show or set this peer's reasoning effort (off / high / max); chat-scoped only. */
+  async #effortCommand(peerKey, args, lang) {
+    const arg = (args ?? "").trim().toLowerCase();
+    const current = this.#currentSelection(peerKey) ?? {};
+    const currentEffort = current.reasoningEffort ?? "high";
+
+    if (arg === "") {
+      return [
+        t(lang, "effort.current", { effort: currentEffort }),
+        t(lang, "effort.options"),
+        `off  — ${t(lang, "effort.off")}`,
+        `high — ${t(lang, "effort.high")}`,
+        `max  — ${t(lang, "effort.max")}`,
+        t(lang, "effort.hint"),
+      ].join("\n");
+    }
+
+    if (arg !== "off" && arg !== "high" && arg !== "max") {
+      return t(lang, "effort.unknown", { effort: arg });
+    }
+
+    const selected = { ...current, reasoningEffort: arg };
+    this.#modelOverridesByPeer.set(peerKey, selected);
+    const holder = this.#holdersByPeer.get(peerKey);
+    if (holder != null) holder.current = selected;
+    return t(lang, "effort.set", { effort: arg });
+  }
+
   /** Resolve a bare model id to a unique provider; undefined when not found. */
   async #findProviderForModel(model) {
     const groups = await this.#loadCatalog();
@@ -785,6 +825,25 @@ export class ImBridge {
   async #resetCommand(peerKey, lang) {
     await this.#resetPeer(peerKey);
     return t(lang, "reset.done");
+  }
+
+  /** Interrupt the peer's active turn and any pending follow-up question. */
+  async #stopPeer(peerKey, lang) {
+    const waiter = this.#questionWaitersByPeer.get(peerKey);
+    if (waiter != null) waiter.reject(new Error(t(lang, "question.cancelledByCommand")));
+
+    const pending = this.#agentsByPeer.get(peerKey);
+    const active = this.#turnsByPeer.has(peerKey);
+    if (pending == null || !active) {
+      return t(lang, "stop.idle");
+    }
+    try {
+      const handle = await pending;
+      handle.agent.cancel({ kind: "user" });
+      return t(lang, "stop.ack");
+    } catch (error) {
+      return t(lang, "stop.failed", { error: error?.message ?? String(error) });
+    }
   }
 
   /** Drop the peer's live agent (and its model holder) so the next message mints a fresh one. */

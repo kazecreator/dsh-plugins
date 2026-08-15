@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.2.3 — 2026-08-15
+
+- Fix WeChat cross-wiring: key each agent/session by CONVERSATION (`from_user_id:context_token`)
+  instead of by sender alone, so one user's private chat and group chat no longer collapse
+  into a single agent (the "另一个对话串了" bug).
+- Add `/stop` command to interrupt the peer's active turn immediately (bypasses the per-peer
+  message queue; cancels with `{ kind: "user" }`).
+- Add `/effort` command to show or set the chat's reasoning effort (`off` / `high` / `max`),
+  scoped to the current conversation only.
+- Telegram: delete the transient progress line on completion instead of editing it to a
+  permanent "✅ Done" above every reply.
+- Telegram: serialize streaming edits through an edit chain so a slow partial edit can no
+  longer overwrite the authoritative final reply (fixes truncated replies).
+
 ## 0.2.2 — 2026-08-14
 
 - Fix Telegram long-reply loss: when a reply exceeds the 4096-char limit, keep

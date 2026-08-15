@@ -145,8 +145,9 @@ export class TelegramChannel {
   async #sendRestartNotice() {
     const notice = takeRestartNotice("telegram");
     if (notice == null) return;
+    const route = notice.route ?? {};
     await this.#call("sendMessage", {
-      chat_id: notice.peerId,
+      chat_id: route.chatId ?? notice.peerId,
       text: t(notice.lang ?? "en", "restart.done"),
     });
   }
@@ -243,6 +244,7 @@ export class TelegramChannel {
       peerId: chatId,
       text,
       sink: streamer,
+      route: { chatId: message.chat.id },
     }).then((replyText) => {
       console.log(`[dsh-im] telegram: replied to ${chatId}: ${replyText.slice(0, 120)}`);
     }).catch((error) => {
@@ -277,6 +279,7 @@ class TelegramReplyStreamer {
   #editTimer = null;
   #opening = null;
   #activityChain = Promise.resolve();
+  #editChain = Promise.resolve();
 
   constructor(chatId, call, lang) {
     this.#chatId = chatId;
@@ -371,23 +374,28 @@ class TelegramReplyStreamer {
     this.#editTimer.unref?.();
   }
 
-  async #flushEdit() {
+  #flushEdit() {
     this.#editTimer = null;
     const md = this.#buffer;
     const overLimit = this.#render(md).length > TELEGRAM_TEXT_LIMIT || markdownToPlainText(md).length > TELEGRAM_TEXT_LIMIT;
     if (overLimit) return; // too long to stream in place; onFinal will split it
-    if (this.#messageId != null) {
-      await this.#edit(this.#messageId, md).catch(() => {});
-      return;
-    }
-    // First render: send once; concurrent flushes await the same opening so a
-    // burst of early chunks cannot spawn duplicate messages.
-    if (this.#opening == null) {
-      this.#opening = (async () => {
-        this.#messageId = await this.#send(md);
-      })().finally(() => { this.#opening = null; });
-    }
-    await this.#opening.catch(() => {});
+    // Serialize streaming edits so a slow earlier edit can never land after a
+    // later, fuller one (or after the authoritative final edit in onFinal).
+    this.#editChain = this.#editChain.then(async () => {
+      if (this.#messageId != null) {
+        await this.#edit(this.#messageId, md).catch(() => {});
+        return;
+      }
+      // First render: send once; concurrent flushes await the same opening so a
+      // burst of early chunks cannot spawn duplicate messages.
+      if (this.#opening == null) {
+        this.#opening = (async () => {
+          this.#messageId = await this.#send(md);
+        })().finally(() => { this.#opening = null; });
+      }
+      await this.#opening.catch(() => {});
+    });
+    return this.#editChain;
   }
 
   onChunk(delta) {
@@ -430,12 +438,13 @@ class TelegramReplyStreamer {
   }
 
   async onFinal(text) {
-    // Flush any pending debounced edit and in-flight opening send, then settle
-    // on the authoritative final text.
+    // Flush any pending debounced edit and in-flight streaming edit, then settle
+    // on the authoritative final text so a slow partial edit can never overwrite it.
     if (this.#editTimer != null) {
       clearTimeout(this.#editTimer);
       this.#editTimer = null;
     }
+    await this.#editChain.catch(() => {});
     if (this.#opening != null) await this.#opening.catch(() => {});
 
     const plain = markdownToPlainText(text);
@@ -463,12 +472,15 @@ class TelegramReplyStreamer {
     } else {
       await this.#send(text);
     }
-    // Settle the status line only after any in-flight activity update lands.
+    // Settle the status line only after any in-flight activity update lands,
+    // then delete the transient progress line (e.g. "⏳ Thinking…") so no
+    // permanent "✅ Done" sits above every reply.
     await this.#activityChain.catch(() => {});
     if (this.#statusId != null) {
-      await this.#call("editMessageText", { chat_id: this.#chatId, message_id: this.#statusId, text: t(this.#lang, "status.done") }).catch((error) => {
-        console.warn("[dsh-im] telegram failed to set status.done:", error?.message ?? error);
+      await this.#call("deleteMessage", { chat_id: this.#chatId, message_id: this.#statusId }).catch((error) => {
+        console.warn("[dsh-im] telegram failed to delete status message:", error?.message ?? error);
       });
+      this.#statusId = null;
     }
   }
 }

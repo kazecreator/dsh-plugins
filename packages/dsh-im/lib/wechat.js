@@ -290,7 +290,8 @@ export class WeChatChannel {
   async #sendRestartNotice() {
     const notice = takeRestartNotice("wechat");
     if (notice == null) return;
-    await this.#send(notice.peerId, undefined, t(notice.lang ?? "en", "restart.done"));
+    const route = notice.route ?? {};
+    await this.#send(route.toUserId ?? notice.peerId, route.contextToken, t(notice.lang ?? "en", "restart.done"));
   }
 
   async #poll() {
@@ -324,7 +325,14 @@ export class WeChatChannel {
     if (text === "") return;
     const fromId = String(message.from_user_id ?? "unknown");
     const contextToken = message.context_token;
-    console.log(`[dsh-im] weixin: message from ${fromId}: ${text.slice(0, 120)}`);
+    // Key the agent/session by CONVERSATION (context_token), not just by sender:
+    // one user can drive several chats with the bot (private + group), and
+    // keying on from_user_id alone routes them all into one agent (cross-wiring).
+    // Fall back to from_user_id only when the conversation token is absent.
+    const peerId = contextToken != null && String(contextToken) !== ""
+      ? `${fromId}:${contextToken}`
+      : fromId;
+    console.log(`[dsh-im] weixin: message from ${fromId} (ctx ${contextToken ?? "-"}): ${text.slice(0, 120)}`);
 
     // Show a "typing…" indicator while the agent works (WeChat iLink has no streaming).
     const typing = this.#beginTyping(fromId, contextToken);
@@ -336,9 +344,10 @@ export class WeChatChannel {
 
     this.#bridge.handleInbound({
       provider: "wechat",
-      peerId: fromId,
+      peerId,
       text,
       sink: streamer,
+      route: { toUserId: fromId, contextToken },
     }).catch((error) => {
       console.error("[dsh-im] weixin reply failed:", error);
       typing.stop();
