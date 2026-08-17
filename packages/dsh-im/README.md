@@ -1,5 +1,10 @@
 # @kazecreator/dsh-im
 
+> ⚠️ **Archived / deprecated** — this package has been merged into
+> [`@kazecreator/dsh-settings-pro`](https://github.com/kazecreator/dsh-settings-pro)
+> (the "设置 Pro" plugin). The IM bridge now ships inside that package; install
+> `@kazecreator/dsh-settings-pro` instead. This repository is kept for history only.
+
 [![npm version](https://img.shields.io/npm/v/@kazecreator/dsh-im)](https://www.npmjs.com/package/@kazecreator/dsh-im)
 [![license](https://img.shields.io/badge/license-MIT-blue)](https://github.com/kazecreator/dsh-plugins/blob/main/LICENSE)
 

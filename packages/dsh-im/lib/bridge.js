@@ -769,7 +769,7 @@ export class ImBridge {
     }
     if (provider === "" || model === "") return t(lang, "model.usage");
     try {
-      const { config } = await this.#llm.resolveCallConfig({ provider, model });
+      const config = await this.#llm.resolveCallConfig({ provider, model });
       const selected = {
         provider: config.provider,
         model: config.model,

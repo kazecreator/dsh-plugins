@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.4 — 2026-08-17
+
+- Fix `/model` switch failure (`Cannot read properties of undefined (reading 'provider')`):
+  `llm.resolveCallConfig` returns the resolved call config directly, not a `{ config }`
+  wrapper, so destructuring `{ config }` left `config` undefined. Read the result as-is.
+
 ## 0.2.3 — 2026-08-15
 
 - Fix WeChat cross-wiring: key each agent/session by CONVERSATION (`from_user_id:context_token`)
