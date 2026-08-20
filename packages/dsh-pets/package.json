@@ -1,0 +1,18 @@
+{
+  "name": "@kazecreator/dsh-pets",
+  "version": "0.1.1",
+  "description": "DeepSeek Harness desktop pets, catalog, and activity monitor plugin",
+  "keywords": ["dsh", "dsh-plugin", "deepseek-harness", "pets", "desktop"],
+  "author": "kazeCreator",
+  "license": "MIT",
+  "type": "module",
+  "main": "lib/index.js",
+  "exports": { ".": "./lib/index.js", "./client": "./lib/client.js", "./package.json": "./package.json" },
+  "files": ["lib", "pet-desktop", "README.md", "example.cordis.patch.yml"],
+  "dsh": { "client": { "platform": "web", "inject": ["@deepseek-ai/dsh-client-ui-primitives"] } },
+  "repository": { "type": "git", "url": "git+https://github.com/kazecreator/dsh-plugins.git", "directory": "packages/dsh-pets" },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "^4.0.1",
+    "@deepseek-ai/schemastery": "^3.18.1"
+  }
+}

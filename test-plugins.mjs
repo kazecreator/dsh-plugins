@@ -45,6 +45,14 @@ try {
     if (routes.length < minimumRoutes) throw new Error(`${pkg}: expected at least ${minimumRoutes} routes, got ${routes.length}`);
     const client = readFileSync(`packages/${pkg}/lib/client.js`, "utf8");
     if (!client.includes(`id: "@kazecreator/${pkg}"`)) throw new Error(`${pkg}: client module id is not package-specific`);
+    if (pkg === "dsh-pets") {
+      const desktopMain = readFileSync("packages/dsh-pets/pet-desktop/main.js", "utf8");
+      if (!desktopMain.includes('"context-menu"') || !desktopMain.includes("关闭宠物") || !desktopMain.includes("petWindow.close()")) {
+        throw new Error("dsh-pets: desktop context menu close action is missing");
+      }
+      const petPage = readFileSync("packages/dsh-pets/lib/pet-page.js", "utf8");
+      if (!petPage.includes("e.button !== 0")) throw new Error("dsh-pets: right-click must not start dragging");
+    }
     const migrated = {
       "dsh-usage": join(testHome, "storages", "dsh-usage", "usage", "2026-08-20.json"),
       "dsh-memory": join(testHome, "storages", "dsh-memory", "memory", "summary.json"),

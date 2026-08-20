@@ -1,0 +1,6 @@
+- insert:
+    - id: dsh-pets
+      name: '@kazecreator/dsh-pets'
+      config:
+        petsEnabled: false
+
