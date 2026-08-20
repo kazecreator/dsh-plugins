@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.4.0 — 2026-08-20
+
+- Add an optional macOS iMessage channel through the `imsg` CLI.
+- Persist the iMessage watch rowid and route replies to the originating private or group chat.
+- Add iMessage sender/chat allowlists, runtime connect/disconnect controls, and status-panel reporting.
+
 ## 0.2.4 — 2026-08-17
 
 - Fix `/model` switch failure (`Cannot read properties of undefined (reading 'provider')`):

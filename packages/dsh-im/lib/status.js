@@ -1,5 +1,5 @@
 /**
- * Shared IM bridge status store. The Telegram/WeChat channels write their live
+ * Shared IM bridge status store. The Telegram/WeChat/iMessage channels write their live
  * state here, and the host serves the current snapshot over `/im/status` for
  * the browser panel to poll. A tiny observable (getSnapshot/subscribe) so the
  * same shape could back a host-side observable later.
@@ -19,6 +19,11 @@ export class ImStatus {
       scanning: false,
       qrStatus: null,
       qrcode: null,
+      error: null,
+    },
+    imessage: {
+      enabled: false,
+      connected: false,
       error: null,
     },
   };
@@ -49,6 +54,14 @@ export class ImStatus {
     this.#state = {
       ...this.#state,
       wechat: { ...this.#state.wechat, ...patch },
+    };
+    this.#emit();
+  }
+
+  setImessage(patch) {
+    this.#state = {
+      ...this.#state,
+      imessage: { ...this.#state.imessage, ...patch },
     };
     this.#emit();
   }

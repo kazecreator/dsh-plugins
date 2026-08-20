@@ -1,33 +1,40 @@
 # dsh-plugins
 
-Plugins for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (`dsh`).
+Independent plugins for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (`dsh`).
 
-## Plugins
+The former `@kazecreator/dsh-settings-pro` package bundled unrelated features into one plugin. They now live here as separate packages, so a profile only needs to install what it uses:
 
-### [dsh-im](./packages/dsh-im) — Telegram & WeChat IM bridge
+| Package | Capability |
+| --- | --- |
+| [`@kazecreator/dsh-im`](./packages/dsh-im) | Telegram, WeChat, and iMessage agent bridge |
+| [`@kazecreator/dsh-usage`](./packages/dsh-usage) | DeepSeek balance and official billed usage |
+| [`@kazecreator/dsh-memory`](./packages/dsh-memory) | Cross-restart project memory and tools |
+| [`@kazecreator/dsh-pets`](./packages/dsh-pets) | Desktop pet, catalog, and activity monitor |
+| [`@kazecreator/dsh-vision`](./packages/dsh-vision) | Image-to-text bridge for text-only models |
 
-Chat with your dsh agent straight from **Telegram** or **WeChat** instead of the
-web UI. Each chat runs its own agent session, replies stream back live, and when
-the agent needs to ask you something it sends the question (with numbered
-options) as a normal message you can answer.
+Each package has its own Cordis entrypoint, configuration schema, web routes, settings section, and `storages/dsh-*` runtime directory. Install the packages independently or together; their routes and state are deliberately namespaced so they can coexist.
 
-Published on npm as [`@kazecreator/dsh-im`](https://www.npmjs.com/package/@kazecreator/dsh-im).
-
-[Install & configure →](./packages/dsh-im/README.md)
-
-## Install a plugin
-
-Plugins are published to npm under the `@kazecreator` scope:
+## Install
 
 ```sh
-dsh plugin --profile <profile> add @kazecreator/dsh-im
+dsh plugin --profile web add @kazecreator/dsh-memory
+dsh plugin --profile web add @kazecreator/dsh-pets
 ```
 
-Then merge the plugin's `example.cordis.patch.yml` into
-`$DSH_HOME/profiles/<profile>/cordis.patch.yml` and restart the profile.
+Add each package's `example.cordis.patch.yml` entry to the profile patch and restart DSH. The package README documents its config and setup details.
 
-Every plugin documents its own setup — required config, defaults, and usage —
-in its `README.md`, so follow the link above for the full steps.
+For local development, install a package path with `file:` rather than `link:` so DSH resolves its `@deepseek-ai/*` peers from the profile:
+
+```sh
+dsh plugin --profile web add file:/path/to/dsh-plugins/packages/dsh-memory
+```
+
+## Development
+
+```sh
+pnpm install
+pnpm -r exec node --check lib/index.js
+```
 
 ## License
 

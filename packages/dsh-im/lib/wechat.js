@@ -1,11 +1,11 @@
 import { randomBytes } from "node:crypto";
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
-import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname } from "node:path";
 import QRCode from "qrcode";
 import { markdownToPlainText, splitPlainTextBytes } from "./markdown.js";
-import { detectLanguage, t } from "./i18n.js";
+import { t } from "./i18n.js";
 import { takeRestartNotice } from "./restart-notice.js";
+import { imStoragePath } from "./im-storage.js";
 
 /**
  * WeChat channel over the official Tencent OpenClaw Weixin protocol
@@ -16,8 +16,8 @@ import { takeRestartNotice } from "./restart-notice.js";
  *
  * Flow: `get_bot_qrcode` → show QR → poll `get_qrcode_status` → on `confirmed`
  * we hold a bot token and long-poll `getupdates` / reply via `sendmessage`.
- * Credentials persist to `$DSH_HOME/storages/dsh-im/wechat.json` so the bot
- * reconnects without rescanning.
+ * Credentials persist to `$DSH_HOME/storages/dsh-im/wechat.json`
+ * so the bot reconnects without rescanning.
  */
 
 const BASE_URL = "https://ilinkai.weixin.qq.com";
@@ -33,8 +33,7 @@ const CHANNEL_VERSION = "2.4.6";
 const WECHAT_TEXT_BYTES = 2048;
 
 function credentialsPath() {
-  const home = process.env.DSH_HOME ?? join(homedir(), ".dsh");
-  return join(home, "storages", "dsh-im", "wechat.json");
+  return imStoragePath("wechat.json");
 }
 
 function loadCredentials() {
@@ -65,8 +64,7 @@ function clearCredentials() {
 
 /** Persisted `get_updates_buf` cursor, so a restart does not re-deliver old messages. */
 function cursorPath() {
-  const home = process.env.DSH_HOME ?? join(homedir(), ".dsh");
-  return join(home, "storages", "dsh-im", "wechat-cursor.json");
+  return imStoragePath("wechat-cursor.json");
 }
 
 function loadCursor() {
@@ -161,6 +159,80 @@ function extractText(message) {
     }
   }
   return parts.join("");
+}
+
+/** Explicit, known WeChat iLink image fields, tried in order. */
+const IMAGE_URL_FIELDS = [
+  "image_item.url",
+  "image_item.cdn_url",
+  "image_item.cdnurl",
+  "image_item.url_original",
+  "image.url",
+  "image.cdn_url",
+  "image.cdnurl",
+  "url",
+  "image_url",
+  "imageUrl",
+  "pic_url",
+  "thumb_url",
+];
+
+/** Best-effort: find an image URL in a WeChat iLink message's non-text items. */
+function extractImage(message) {
+  const items = message.item_list ?? [];
+  for (const item of items) {
+    if (item == null || item.type === 1) continue; // skip text items
+    // 1) Known fields first (precise, cheap).
+    for (const path of IMAGE_URL_FIELDS) {
+      const url = readPath(item, path);
+      if (typeof url === "string" && url.trim() !== "") return { url };
+    }
+    // 2) Fallback: scan the whole item for the first http(s) URL. Non-text items
+    //    almost always carry their media as a URL, so this survives unknown shapes
+    //    without needing a repro round-trip to learn the exact field name.
+    const url = deepFindUrl(item);
+    if (url != null) return { url };
+    // Nothing image-like found: log the shape for later follow-up.
+    console.log(`[dsh-im] weixin: unhandled non-text item shape: ${JSON.stringify(item).slice(0, 500)}`);
+  }
+  return null;
+}
+
+function readPath(value, dotted) {
+  let cur = value;
+  for (const key of dotted.split(".")) {
+    if (cur == null) return undefined;
+    cur = cur[key];
+  }
+  return cur;
+}
+
+/** Recursively return the first `http(s)://` string found under `value`. */
+function deepFindUrl(value, depth = 0) {
+  if (value == null || depth > 6) return null;
+  if (typeof value === "string") return /^https?:\/\//i.test(value.trim()) ? value.trim() : null;
+  if (Array.isArray(value)) {
+    for (const el of value) {
+      const hit = deepFindUrl(el, depth + 1);
+      if (hit) return hit;
+    }
+    return null;
+  }
+  if (typeof value === "object") {
+    for (const key of Object.keys(value)) {
+      const hit = deepFindUrl(value[key], depth + 1);
+      if (hit) return hit;
+    }
+  }
+  return null;
+}
+
+function guessMediaType(url) {
+  const clean = String(url).split("?")[0].toLowerCase();
+  if (clean.endsWith(".png")) return "image/png";
+  if (clean.endsWith(".webp")) return "image/webp";
+  if (clean.endsWith(".gif")) return "image/gif";
+  return "image/jpeg";
 }
 
 function sleep(ms, signal) {
@@ -322,7 +394,8 @@ export class WeChatChannel {
   #handleMessage(message) {
     if (message.message_type === 2) return; // our own bot echo
     const text = extractText(message);
-    if (text === "") return;
+    const imageRef = extractImage(message);
+    if (text === "" && imageRef == null) return;
     const fromId = String(message.from_user_id ?? "unknown");
     const contextToken = message.context_token;
     // Key the agent/session by CONVERSATION (context_token), not just by sender:
@@ -332,23 +405,39 @@ export class WeChatChannel {
     const peerId = contextToken != null && String(contextToken) !== ""
       ? `${fromId}:${contextToken}`
       : fromId;
-    console.log(`[dsh-im] weixin: message from ${fromId} (ctx ${contextToken ?? "-"}): ${text.slice(0, 120)}`);
+    console.log(`[dsh-im] weixin: message from ${fromId} (ctx ${contextToken ?? "-"}): ${imageRef != null ? "[image]" : ""} ${text.slice(0, 120)}`);
 
     // Show a "typing…" indicator while the agent works (WeChat iLink has no streaming).
     const typing = this.#beginTyping(fromId, contextToken);
     const streamer = new WeChatReplyStreamer(
       (msg) => this.#send(fromId, contextToken, msg),
       typing,
-      detectLanguage(text),
+      "en", // the bridge sets the session language once the peer's lang resolves
     );
 
-    this.#bridge.handleInbound({
-      provider: "wechat",
-      peerId,
-      text,
-      sink: streamer,
-      route: { toUserId: fromId, contextToken },
-    }).catch((error) => {
+    const run = async () => {
+      let image = null;
+      if (imageRef != null) {
+        try {
+          const res = await fetch(imageRef.url);
+          if (!res.ok) throw new Error(`image download HTTP ${res.status}`);
+          image = { data: Buffer.from(await res.arrayBuffer()), mediaType: guessMediaType(imageRef.url) };
+        } catch (error) {
+          await this.#send(fromId, contextToken, `⚠️ Image download failed: ${error?.message ?? String(error)}`).catch(() => {});
+          return "";
+        }
+      }
+      return this.#bridge.handleInbound({
+        provider: "wechat",
+        peerId,
+        text,
+        sink: streamer,
+        route: { toUserId: fromId, contextToken },
+        image,
+      });
+    };
+
+    run().catch((error) => {
       console.error("[dsh-im] weixin reply failed:", error);
       typing.stop();
       return this.#send(fromId, contextToken, `⚠️ ${error?.message ?? String(error)}`).catch(() => {});
@@ -362,7 +451,7 @@ export class WeChatChannel {
       msg: {
         from_user_id: "",
         to_user_id: toUserId,
-        client_id: `dsh-im:${Date.now()}-${randomBytes(4).toString("hex")}`,
+        client_id: `settings-pro:${Date.now()}-${randomBytes(4).toString("hex")}`,
         message_type: 2, // BOT
         message_state: 2, // FINISH
         item_list: [{ type: 1, text_item: { text } }],
@@ -476,6 +565,11 @@ class WeChatReplyStreamer {
     this.#lang = lang ?? "en";
   }
 
+  /** Called by the bridge once the peer's session language is resolved. */
+  setLang(lang) {
+    this.#lang = lang === "zh" ? "zh" : "en";
+  }
+
   onChunk() {
     // No-op: WeChat buffers deltas server-side; onFinal carries the full text.
   }
@@ -505,3 +599,5 @@ class WeChatReplyStreamer {
     }
   }
 }
+
+export { extractText, extractImage, guessMediaType };

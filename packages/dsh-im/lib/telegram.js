@@ -1,9 +1,9 @@
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname } from "node:path";
 import { markdownToPlainText, markdownToTelegramHtml, splitPlainText } from "./markdown.js";
 import { t } from "./i18n.js";
 import { takeRestartNotice } from "./restart-notice.js";
+import { imStoragePath } from "./im-storage.js";
 
 const JSON_HEADERS = { "Content-Type": "application/json" };
 /** Telegram `sendMessage` text limit (UTF-16 code units). */
@@ -25,8 +25,7 @@ const TELEGRAM_POLL_BACKOFF_MAX_MS = 60000;
 
 /** Persisted `getUpdates` offset, so a restart does not re-deliver old updates. */
 function offsetPath() {
-  const home = process.env.DSH_HOME ?? join(homedir(), ".dsh");
-  return join(home, "storages", "dsh-im", "telegram-offset.json");
+  return imStoragePath("telegram-offset.json");
 }
 
 function loadOffset() {
@@ -171,7 +170,11 @@ export class TelegramChannel {
           this.#offset = Math.max(this.#offset, update.update_id + 1);
           const message = update.message;
           if (message == null || message.chat == null) continue;
-          if (typeof message.text !== "string") continue;
+          // Photo messages carry no `.text` (only `caption`); keep them so the
+          // vision bridge can describe the image. Other non-text updates (e.g.
+          // stickers) are still dropped.
+          const hasPhoto = Array.isArray(message.photo) && message.photo.length > 0;
+          if (typeof message.text !== "string" && !hasPhoto) continue;
           this.#handleMessage(message);
         }
         if (updates.length > 0) saveOffset(this.#offset);
@@ -227,9 +230,11 @@ export class TelegramChannel {
       console.log(`[dsh-im] telegram: dropped message from ${fromId} (not in allowlist)`);
       return;
     }
-    const text = message.text ?? "";
-    if (text.trim() === "") return;
-    console.log(`[dsh-im] telegram: message from ${fromId}: ${text.slice(0, 120)}`);
+
+    const photo = Array.isArray(message.photo) && message.photo.length > 0 ? message.photo : null;
+    const text = photo != null ? (message.caption ?? "") : (message.text ?? "");
+    if (photo == null && text.trim() === "") return;
+    console.log(`[dsh-im] telegram: message from ${fromId}: ${photo != null ? "[photo]" : ""} ${text.slice(0, 120)}`);
 
     // Show "typing…" while the agent works. Telegram clears it automatically
     // when the reply lands, and the action expires after ~5s, so keep it alive.
@@ -239,13 +244,30 @@ export class TelegramChannel {
 
     const streamer = new TelegramReplyStreamer(message.chat.id, (method, body) => this.#call(method, body), this.#getUiLang?.() ?? "en");
 
-    this.#bridge.handleInbound({
-      provider: "telegram",
-      peerId: chatId,
-      text,
-      sink: streamer,
-      route: { chatId: message.chat.id },
-    }).then((replyText) => {
+    const run = async () => {
+      let image = null;
+      if (photo != null) {
+        try {
+          image = await this.#downloadPhoto(photo);
+        } catch (error) {
+          await this.#call("sendMessage", {
+            chat_id: message.chat.id,
+            text: `⚠️ Image download failed: ${error?.message ?? String(error)}`,
+          }).catch(() => {});
+          return "";
+        }
+      }
+      return this.#bridge.handleInbound({
+        provider: "telegram",
+        peerId: chatId,
+        text,
+        sink: streamer,
+        route: { chatId: message.chat.id },
+        image,
+      });
+    };
+
+    run().then((replyText) => {
       console.log(`[dsh-im] telegram: replied to ${chatId}: ${replyText.slice(0, 120)}`);
     }).catch((error) => {
       console.error("[dsh-im] telegram reply failed:", error);
@@ -256,6 +278,22 @@ export class TelegramChannel {
     }).finally(() => {
       clearInterval(typingTimer);
     });
+  }
+
+  /** Download the largest photo variant as image bytes + media type. */
+  async #downloadPhoto(photo) {
+    const largest = photo[photo.length - 1];
+    const file = await this.#call("getFile", { file_id: largest?.file_id });
+    const filePath = file?.file_path;
+    if (!filePath) throw new Error("telegram getFile did not return file_path");
+    const base = (this.#config.telegramApiBase ?? "https://api.telegram.org").replace(/\/+$/, "");
+    const url = `${base}/file/bot${this.token}/${filePath}`;
+    const res = await fetch(url);
+    if (!res.ok) throw new Error(`telegram image download HTTP ${res.status}`);
+    const data = Buffer.from(await res.arrayBuffer());
+    const ext = (filePath.split(".").pop() ?? "").toLowerCase();
+    const mediaType = ext === "png" ? "image/png" : ext === "webp" ? "image/webp" : ext === "gif" ? "image/gif" : "image/jpeg";
+    return { data, mediaType };
   }
 
   stop() {
@@ -285,6 +323,11 @@ class TelegramReplyStreamer {
     this.#chatId = chatId;
     this.#call = call;
     this.#lang = lang ?? "en";
+  }
+
+  /** Called by the bridge once the peer's session language is resolved. */
+  setLang(lang) {
+    this.#lang = lang === "zh" ? "zh" : "en";
   }
 
   #render(md) {

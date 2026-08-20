@@ -1,8 +1,7 @@
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname } from "node:path";
 import { installModelSelection } from "@deepseek-ai/dsh-agent";
 import { createUserMessage } from "@deepseek-ai/dsh-llm";
 import { SessionId } from "@deepseek-ai/dsh-session";
@@ -10,19 +9,31 @@ import { parseCommand } from "./commands.js";
 import { parseAnswer, renderQuestion } from "./questions.js";
 import { detectLanguage, t } from "./i18n.js";
 import { saveRestartNotice } from "./restart-notice.js";
+import { imStoragePath, imWorkspaceDir } from "./im-storage.js";
 
 const DEFAULT_REPLY_TIMEOUT_MS = 120000;
 const CANCEL_SETTLE_TIMEOUT_MS = 5000;
 
+/** Format a millisecond duration as a compact human string (e.g. "3h 12m"). */
+function formatUptime(ms) {
+  const totalSec = Math.max(0, Math.floor(Number(ms) / 1000));
+  const d = Math.floor(totalSec / 86400);
+  const h = Math.floor((totalSec % 86400) / 3600);
+  const m = Math.floor((totalSec % 3600) / 60);
+  if (d > 0) return `${d}d ${h}h`;
+  if (h > 0) return `${h}h ${m}m`;
+  return `${m}m`;
+}
+
 /**
  * Per-agent system-prompt section: the model is answering through a chat
- * bridge (Telegram/WeChat), so it is nudged toward short plain-text replies
+ * bridge (Telegram/WeChat/iMessage), so it is nudged toward short plain-text replies
  * that survive the channel's 4096-char message limit. Registered through the
  * agent-scoped prompt-assembly waterfall (the same seam `installModelSelection`
  * uses), so it never leaks into web-GUI sessions and unwinds with the agent.
  */
 const IM_FORMATTING_PROMPT = [
-  "You are answering through an instant-messaging bridge (Telegram / WeChat), not the full web UI. Adapt replies to a chat thread:",
+  "You are answering through an instant-messaging bridge (Telegram / WeChat / iMessage), not the full web UI. Adapt replies to a chat thread:",
   "- Lead with the answer or the decision, not a narrated process.",
   "- Keep replies concise; prefer plain text over heavy Markdown.",
   "- Avoid GFM tables and long fenced code blocks; use short inline code instead.",
@@ -31,14 +42,19 @@ const IM_FORMATTING_PROMPT = [
 
 /** Persisted peer → session mapping, so a restart resumes each IM peer's agent session instead of losing its history. */
 function peersPath() {
-  const home = process.env.DSH_HOME ?? join(homedir(), ".dsh");
-  return join(home, "storages", "dsh-im", "peers.json");
+  return imStoragePath("peers.json");
 }
 
 function loadPeers() {
   try {
     const parsed = JSON.parse(readFileSync(peersPath(), "utf8"));
-    return parsed != null && typeof parsed === "object" ? parsed : {};
+    if (parsed == null || typeof parsed !== "object") return {};
+    // Migrate legacy string values ("peer → sessionId") to the record shape.
+    const records = {};
+    for (const [key, value] of Object.entries(parsed)) {
+      records[key] = typeof value === "string" ? { sessionId: value } : (value ?? {});
+    }
+    return records;
   } catch {
     return {};
   }
@@ -166,9 +182,16 @@ export class ImBridge {
   #sessionIdByPeer = new Map();
   #questionTimeoutMs;
   #upstreamQuestionProvider;
+  #vision;
+  #usage;
+  #status;
+  #startedAt = Date.now();
 
-  constructor(ctx, config = {}) {
+  constructor(ctx, config = {}, vision = null, usage = null, status = null) {
     this.#ctx = ctx;
+    this.#vision = vision;
+    this.#usage = usage;
+    this.#status = status;
     this.#agents = ctx.get("agents");
     this.#defaultModel = ctx.get("agentDefaultModel");
     this.#llm = ctx.get("llm");
@@ -186,7 +209,11 @@ export class ImBridge {
     this.#questionTimeoutMs = Number.isFinite(config.questionTimeoutMs) && config.questionTimeoutMs > 0
       ? config.questionTimeoutMs
       : 0;
-    this.#sessionIdByPeer = new Map(Object.entries(loadPeers()));
+    this.#sessionIdByPeer = new Map();
+    for (const [peerKey, record] of Object.entries(loadPeers())) {
+      if (record?.sessionId) this.#sessionIdByPeer.set(peerKey, record.sessionId);
+      if (record?.lang === "zh" || record?.lang === "en") this.#langByPeer.set(peerKey, record.lang);
+    }
 
     // One process-wide subscription to the append feed; each turn registers a
     // per-session handler keyed by session id so live events drive streaming,
@@ -208,8 +235,33 @@ export class ImBridge {
     return this.#agents != null && this.#defaultModel != null;
   }
 
+  /**
+   * Provider ("telegram" | "wechat" | "imessage") that owns a session id, or `null` when the
+   * session is not an IM peer (i.e. the local owner / Web GUI). Exposed so the
+   * pets monitor can tag activity with its originating channel.
+   */
+  channelForSession(sessionId) {
+    if (!sessionId) return null;
+    const peerKey = this.#peerBySessionId.get(sessionId);
+    if (peerKey == null) return null;
+    const idx = peerKey.indexOf(":");
+    return idx > 0 ? peerKey.slice(0, idx) : null;
+  }
+
   #peerKey(provider, peerId) {
     return `${provider}:${peerId}`;
+  }
+
+  /** Persist the peer → {sessionId, lang} map to peers.json. */
+  #persistPeers() {
+    const records = {};
+    for (const key of new Set([...this.#sessionIdByPeer.keys(), ...this.#langByPeer.keys()])) {
+      records[key] = {
+        ...(this.#sessionIdByPeer.has(key) ? { sessionId: this.#sessionIdByPeer.get(key) } : {}),
+        ...(this.#langByPeer.has(key) ? { lang: this.#langByPeer.get(key) } : {}),
+      };
+    }
+    savePeers(records);
   }
 
   /** Resolve the IM peer that owns a live agent, or `undefined` for non-IM agents. */
@@ -223,10 +275,18 @@ export class ImBridge {
    * switches the peer to Chinese; otherwise the peer keeps its remembered
    * language (so a slash command or a numeric answer doesn't flip it back).
    */
-  #resolveLang(peerKey, text) {
+  #resolveLang(peerKey, text, isCommand = false) {
+    // A slash command carries no language signal; never let it overwrite (or
+    // first-set) the peer's remembered language. It just echoes whatever is
+    // already remembered (or English before any natural-language message).
+    if (isCommand) return this.#langByPeer.get(peerKey) ?? "en";
     const detected = detectLanguage(text);
-    if (detected === "zh" || !this.#langByPeer.has(peerKey)) {
-      this.#langByPeer.set(peerKey, detected);
+    const remembered = this.#langByPeer.get(peerKey);
+    if (detected === "zh" || remembered === undefined) {
+      if (remembered !== detected) {
+        this.#langByPeer.set(peerKey, detected);
+        this.#persistPeers();
+      }
     }
     return this.#langByPeer.get(peerKey) ?? "en";
   }
@@ -371,10 +431,15 @@ export class ImBridge {
     };
   }
 
-  /** Dedicated workspace directory for IM sessions, so they group under one named workspace. */
+  /**
+   * Dedicated workspace directory for IM sessions, so they group under one
+   * named workspace. Kept at the legacy `storages/dsh-im/im-workspace` path:
+   * the workspace registry record and every IM session header's `cwd` (and the
+   * `sessions/--<cwd>--/` layout) are bound to it, so moving it would orphan
+   * the attached sessions from the "IM Bridge" workspace.
+   */
   #imWorkspaceDir() {
-    const home = process.env.DSH_HOME ?? join(homedir(), ".dsh");
-    return join(home, "storages", "dsh-im", "im-workspace");
+    return imWorkspaceDir();
   }
 
   /** Create/reuse the "IM Bridge" workspace and attach a session to it (best-effort). */
@@ -460,7 +525,7 @@ export class ImBridge {
         setup,
       });
       this.#sessionIdByPeer.set(peerKey, handle.agent.session.id);
-      savePeers(Object.fromEntries(this.#sessionIdByPeer));
+      this.#persistPeers();
     }
     const { agent, dispose } = handle;
     await agent.whenIdle();
@@ -561,11 +626,16 @@ export class ImBridge {
    * @param {{provider: string, peerId: string, text: string, sink?: object, reply?: (text: string) => Promise<unknown>}} input
    * @returns {Promise<string>} the assistant reply text.
    */
-  handleInbound({ provider, peerId, text, sink, reply, route }) {
+  handleInbound({ provider, peerId, text, sink, reply, route, image }) {
     const peerKey = this.#peerKey(provider, peerId);
     const resolvedSink = normalizeSink(sink, reply);
     const command = this.#commandsEnabled ? parseCommand(text) : null;
-    const lang = this.#resolveLang(peerKey, text);
+    const lang = this.#resolveLang(peerKey, text, command != null);
+
+    // Keep the sink's own language in sync with the SESSION language, so any
+    // sink-localized label (e.g. WeChat's "thinking" dedup) compares against the
+    // right language instead of a per-message or UI-language guess.
+    if (typeof resolvedSink?.setLang === "function") resolvedSink.setLang(lang);
 
     // /stop interrupts the active turn immediately instead of queueing behind it.
     if (command?.name === "stop") {
@@ -597,12 +667,53 @@ export class ImBridge {
         if (command.name === "restart" && this.#restartEnabled) this.#restartProcess(provider, route ?? { peerId }, lang);
         return replyText;
       }
+      // An attached image is described first (vision bridge), then the resulting
+      // text is fed to the text model like any other message.
+      let prompt = text;
+      if (image != null) {
+        prompt = await this.#describeImage(resolvedSink, text, image, lang);
+        if (prompt == null) return ""; // describe failed; the error was already replied
+      }
       const { agent } = await this.#acquireAgent(peerKey);
-      return await this.#handleTurn(peerKey, agent, text, resolvedSink, lang);
+      return await this.#handleTurn(peerKey, agent, prompt, resolvedSink, lang);
     });
     // Keep the chain alive on failure so the peer queue never wedges.
     this.#queuesByPeer.set(peerKey, next.catch(() => {}));
     return next;
+  }
+
+  /** Describe an attached image via the vision service; returns the prompt text or null on failure. */
+  async #describeImage(sink, text, image, lang) {
+    if (this.#vision == null || this.#vision.enabled !== true) {
+      await this.#replyNow(sink, t(lang, "vision.disabled"));
+      return null;
+    }
+    if (typeof sink?.onActivity === "function") {
+      try {
+        sink.onActivity(t(lang, "activity.vision"));
+      } catch {
+        // ignore activity failures
+      }
+    }
+    let description;
+    try {
+      description = await this.#vision.describe(image.data, {
+        mediaType: image.mediaType ?? "image/png",
+        question: text,
+        lang,
+      });
+    } catch (error) {
+      await this.#replyNow(sink, t(lang, "vision.failed", { error: error?.message ?? String(error) }));
+      return null;
+    }
+    const caption = String(text ?? "").trim();
+    const intro = lang === "zh"
+      ? "用户发来一张图片，图片内容如下（请直接、自然地基于图片内容回答用户，不要提及“文字描述”或“看不到原图”这类话）："
+      : "The user sent an image, described below. Answer the user directly and naturally from the image content; do not mention \"text description\" or \"can't see the original image\":";
+    const captionLine = lang === "zh"
+      ? `用户随图文字：${caption !== "" ? caption : t(lang, "vision.noCaption")}`
+      : `User's caption text: ${caption !== "" ? caption : t(lang, "vision.noCaption")}`;
+    return [intro, description, "", captionLine].join("\n");
   }
 
   // --- slash commands -------------------------------------------------------
@@ -619,6 +730,8 @@ export class ImBridge {
       case "new":
       case "reset":
         return await this.#resetCommand(peerKey, lang);
+      case "status":
+        return await this.#statusCommand(peerKey, lang);
       case "restart":
         return this.#restartReply(lang);
       default:
@@ -637,12 +750,104 @@ export class ImBridge {
       t(lang, "help.new"),
       t(lang, "help.stop"),
       t(lang, "help.restart"),
+      t(lang, "help.status"),
     ].join("\n");
   }
 
   #restartReply(lang) {
     if (!this.#restartEnabled) return t(lang, "restart.disabled");
     return t(lang, "restart.ack");
+  }
+
+  /** Compose the /status reply: channels, model, vision, usage/balance, uptime. */
+  async #statusCommand(peerKey, lang) {
+    const lines = [t(lang, "status.title")];
+
+    lines.push("", t(lang, "status.channels"));
+    const provider = String(peerKey).split(":")[0];
+    lines.push(this.#channelStatusLine(provider, lang));
+
+    lines.push("", t(lang, "status.model"));
+    const current = this.#currentSelection(peerKey) ?? {};
+    lines.push(`• ${current.provider ?? "?"}/${current.model ?? "?"}`);
+    lines.push(`• ${t(lang, "status.effort", { effort: current.reasoningEffort ?? "high" })}`);
+
+    if (this.#vision != null) {
+      lines.push("", t(lang, "status.vision"));
+      lines.push(
+        this.#vision.enabled
+          ? `• ${t(lang, "status.visionOn", { model: this.#vision.model ?? "?" })}`
+          : `• ${t(lang, "status.visionOff")}`,
+      );
+    }
+
+    lines.push("", t(lang, "status.usage"));
+    lines.push(...await this.#usageStatusLines(lang));
+
+    lines.push("", t(lang, "status.uptime", { uptime: formatUptime(Date.now() - this.#startedAt) }));
+    return lines.join("\n");
+  }
+
+  /** One channel's status line (telegram / wechat / imessage). */
+  #channelStatusLine(kind, lang) {
+    const snapshot = this.#status?.getSnapshot?.() ?? {};
+    const state = snapshot[kind] ?? {};
+    const label = t(lang, kind === "telegram" ? "status.telegram" : kind === "wechat" ? "status.wechat" : "status.imessage");
+    if (state.enabled !== true) return `• ${label}: ${t(lang, "status.channel.disabled")}`;
+    if (kind === "telegram") {
+      const bot = state.bot ? ` @${state.bot}` : "";
+      return `• ${label}: ${state.connected ? t(lang, "status.channel.connected", { bot }) : t(lang, "status.channel.enabled")}`;
+    }
+    if (kind === "imessage") {
+      return `• ${label}: ${state.connected ? t(lang, "status.channel.connected", { bot: "" }) : t(lang, "status.channel.enabled")}`;
+    }
+    const user = state.userName ? ` ${state.userName}` : "";
+    return `• ${label}: ${state.loggedIn ? t(lang, "status.channel.loggedIn", { user }) : t(lang, "status.channel.enabled")}`;
+  }
+
+  /** Balance + today usage lines, mirroring the get_usage tool's formatting. */
+  async #usageStatusLines(lang) {
+    if (this.#usage == null) return [`• ${t(lang, "status.usageUnavailable")}`];
+    try {
+      const payload = await this.#usage.payload(true);
+      const lines = [];
+      const infos = payload?.balance?.balance_infos;
+      if (Array.isArray(infos) && infos.length > 0) {
+        for (const b of infos) {
+          lines.push(`• ${t(lang, "status.balanceLine", {
+            currency: b.currency ?? "",
+            total: b.total_balance ?? "0",
+            granted: b.granted_balance ?? "0",
+            topped: b.topped_up_balance ?? "0",
+          })}`);
+        }
+      } else if (payload?.balanceError) {
+        lines.push(`• ${t(lang, "status.balanceError", { error: payload.balanceError })}`);
+      }
+      const today = payload?.today?.date;
+      const officialToday = (payload?.officialDaily ?? []).find((d) => d.date === today);
+      if (officialToday && (officialToday.cost > 0 || officialToday.cacheHit > 0 || officialToday.cacheMiss > 0 || officialToday.response > 0)) {
+        lines.push(`• ${t(lang, "status.todayLine", {
+          hit: officialToday.cacheHit || 0,
+          miss: officialToday.cacheMiss || 0,
+          resp: officialToday.response || 0,
+          cost: Number(officialToday.cost || 0).toFixed(2),
+        })}`);
+      } else if (payload?.today?.total) {
+        const total = payload.today.total;
+        lines.push(`• ${t(lang, "status.todayLine", {
+          hit: total.cacheReadTokens ?? 0,
+          miss: total.inputTokens ?? 0,
+          resp: total.outputTokens ?? 0,
+          cost: Number(total.cost ?? 0).toFixed(2),
+        })}`);
+      } else {
+        lines.push(`• ${t(lang, "status.noUsage")}`);
+      }
+      return lines;
+    } catch (error) {
+      return [`• ${t(lang, "status.usageError", { error: error?.message ?? String(error) })}`];
+    }
   }
 
   /** Send a command reply through the sink and await its delivery. */
@@ -857,7 +1062,7 @@ export class ImBridge {
     this.#turnsByPeer.delete(peerKey);
     // Forget the persisted session so the next message starts a fresh one.
     if (this.#sessionIdByPeer.delete(peerKey)) {
-      savePeers(Object.fromEntries(this.#sessionIdByPeer));
+      this.#persistPeers();
     }
     if (pending == null) return;
     try {

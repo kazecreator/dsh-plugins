@@ -1,8 +1,7 @@
 {
   "name": "@kazecreator/dsh-im",
-  "version": "0.2.4",
-  "private": true,
-  "description": "ARCHIVED — merged into @kazecreator/dsh-settings-pro. DeepSeek Harness IM bridge plugin: route Telegram & WeChat messages into per-peer agent sessions and reply back",
+  "version": "0.4.0",
+  "description": "DeepSeek Harness IM bridge: Telegram, WeChat, and iMessage channels for per-peer agent sessions",
   "keywords": [
     "dsh",
     "dsh-plugin",
@@ -10,6 +9,7 @@
     "im",
     "telegram",
     "wechat",
+    "imessage",
     "bridge",
     "cordis"
   ],

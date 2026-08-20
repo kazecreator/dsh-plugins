@@ -1,7 +1,7 @@
 # Example patch layer for @kazecreator/dsh-im. Merge the `insert` block below into
 # $DSH_HOME/profiles/<profile>/cordis.patch.yml (it is a top-level YAML array).
 #
-# Both channels are disabled by default, so the bridge mounts inert until you
+# All channels are disabled by default, so the bridge mounts inert until you
 # opt in. Uncomment/edit what you need, then restart the profile.
 
 - insert:
@@ -32,3 +32,12 @@
 
         # --- WeChat ---
         wechatEnabled: false
+
+        # --- iMessage (macOS + imsg CLI) ---
+        imessageEnabled: false
+        # imessageCommand: 'imsg'
+        # imessageDbPath: ''
+        # imessageWatchDebounce: '250ms'
+        # Optional exact sender handles (phone/email) and local chat row ids.
+        # imessageAllowedHandles: ['+15551234567']
+        # imessageAllowedChatIds: ['42']

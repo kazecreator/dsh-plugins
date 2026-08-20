@@ -1,6 +1,6 @@
 import { mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname } from "node:path";
+import { imStoragePath } from "./im-storage.js";
 
 /**
  * A single "restart is in flight" notice that survives the process relaunch.
@@ -13,8 +13,7 @@ import { dirname, join } from "node:path";
  */
 
 function noticePath() {
-  const home = process.env.DSH_HOME ?? join(homedir(), ".dsh");
-  return join(home, "storages", "dsh-im", "restart-notice.json");
+  return imStoragePath("restart-notice.json");
 }
 
 /**
@@ -40,12 +39,31 @@ export function saveRestartNotice(notice) {
  * @returns {{provider: string, peerId: string, lang: string} | null}
  */
 export function takeRestartNotice(provider) {
+  const parsed = peekRestartNotice(provider);
+  if (parsed == null) return null;
+  clearRestartNotice(provider);
+  return parsed;
+}
+
+/** Read a matching notice without consuming it; useful when delivery can fail. */
+export function peekRestartNotice(provider) {
   try {
     const parsed = JSON.parse(readFileSync(noticePath(), "utf8"));
     if (parsed == null || parsed.provider !== provider) return null;
-    unlinkSync(noticePath());
     return parsed;
   } catch {
     return null;
+  }
+}
+
+/** Remove a matching notice after the channel confirms delivery. */
+export function clearRestartNotice(provider) {
+  try {
+    const parsed = JSON.parse(readFileSync(noticePath(), "utf8"));
+    if (parsed == null || parsed.provider !== provider) return false;
+    unlinkSync(noticePath());
+    return true;
+  } catch {
+    return false;
   }
 }

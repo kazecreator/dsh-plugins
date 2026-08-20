@@ -1,0 +1,335 @@
+import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { dirname } from "node:path";
+import { ImBridge } from "./bridge.js";
+import { ImStatus } from "./status.js";
+import { ImessageChannel } from "./imessage.js";
+import { TelegramChannel } from "./telegram.js";
+import { WeChatChannel } from "./wechat.js";
+import { imStoragePath } from "./im-storage.js";
+
+const LOG = "[dsh-im]";
+
+/**
+ * Path of the UI-written runtime overrides (survive restarts, override the
+ * patch layer). Lives under the plugin's own `storages/dsh-im` root; state left
+ * behind by the old monolithic settings-pro package is migrated once on
+ * startup (see `migrateSettingsProImStorage`).
+ */
+function runtimeConfigPath() {
+  return imStoragePath("config.json");
+}
+
+/** Read a JSON request body (bounded). */
+function readJson(req) {
+  return new Promise((resolve, reject) => {
+    let body = "";
+    req.on("data", (chunk) => {
+      body += chunk;
+      if (body.length > 1e6) req.destroy(new Error("body too large"));
+    });
+    req.on("end", () => {
+      try {
+        resolve(body ? JSON.parse(body) : {});
+      } catch (error) {
+        reject(error);
+      }
+    });
+    req.on("error", reject);
+  });
+}
+
+/**
+ * Runtime controller: owns the three channel instances, the shared status store,
+ * and the UI-written overrides file. It can start/stop each channel live so the
+ * web panel can connect Telegram (token) and start WeChat (scan) without a
+ * profile restart.
+ */
+class ImController {
+  #ctx;
+  #bridge;
+  #status;
+  #patchConfig;
+  #runtimeConfig;
+  #configPath;
+  #telegram = null;
+  #wechat = null;
+  #imessage = null;
+  #uiLang = "en";
+
+  constructor(ctx, patchConfig, vision = null, usage = null) {
+    this.#ctx = ctx;
+    this.#patchConfig = patchConfig;
+    this.#configPath = runtimeConfigPath();
+    this.#runtimeConfig = this.#loadRuntimeConfig();
+    this.#status = new ImStatus();
+    this.#bridge = new ImBridge(ctx, { ...this.#patchConfig, ...this.#runtimeConfig }, vision, usage, this.#status);
+  }
+
+  get available() {
+    return this.#bridge.available;
+  }
+
+  channelForSession(sessionId) {
+    return this.#bridge.channelForSession(sessionId);
+  }
+
+  effectiveConfig() {
+    return { ...this.#patchConfig, ...this.#runtimeConfig };
+  }
+
+  #loadRuntimeConfig() {
+    try {
+      const parsed = JSON.parse(readFileSync(this.#configPath, "utf8"));
+      return parsed != null && typeof parsed === "object" ? parsed : {};
+    } catch {
+      return {};
+    }
+  }
+
+  #saveRuntimeConfig() {
+    try {
+      mkdirSync(dirname(this.#configPath), { recursive: true });
+      writeFileSync(this.#configPath, JSON.stringify(this.#runtimeConfig, null, 2) + "\n");
+    } catch (error) {
+      console.error(`${LOG} failed to save runtime config:`, error);
+    }
+  }
+
+  #readLang(req) {
+    try {
+      const lang = new URL(req.url ?? "", "http://localhost").searchParams.get("lang");
+      if (lang === "zh" || lang === "en") this.#uiLang = lang;
+    } catch {
+      // Ignore malformed URLs.
+    }
+  }
+
+  #getUiLang = () => this.#uiLang;
+
+  start() {
+    this.#status.setTelegram({ enabled: this.effectiveConfig().telegramEnabled === true });
+    this.#status.setWechat({ enabled: this.effectiveConfig().wechatEnabled === true });
+    this.#status.setImessage({ enabled: this.effectiveConfig().imessageEnabled === true });
+    this.#startTelegram();
+    this.#startWechat();
+    this.#startImessage();
+    this.#registerRoutes();
+  }
+
+  #startTelegram() {
+    if (this.#telegram != null) this.#telegram.stop();
+    const config = this.effectiveConfig();
+    this.#telegram = new TelegramChannel(config, this.#bridge, this.#status, this.#getUiLang);
+    this.#telegram.start();
+  }
+
+  #startWechat() {
+    if (this.#wechat != null) {
+      this.#wechat.stop();
+    }
+    const config = this.effectiveConfig();
+    this.#wechat = new WeChatChannel(config, this.#bridge, this.#status, this.#getUiLang);
+    this.#wechat.start().catch((error) => {
+      console.error(`${LOG} wechat start failed:`, error);
+      this.#status.setWechat({ error: error?.message ?? String(error) });
+    });
+  }
+
+  #startImessage() {
+    if (this.#imessage != null) this.#imessage.stop();
+    const config = this.effectiveConfig();
+    this.#imessage = new ImessageChannel(config, this.#bridge, this.#status, this.#getUiLang);
+    this.#imessage.start();
+  }
+
+  startImessage() {
+    this.#runtimeConfig.imessageEnabled = true;
+    this.#saveRuntimeConfig();
+    this.#startImessage();
+  }
+
+  stopImessage() {
+    this.#runtimeConfig.imessageEnabled = false;
+    this.#saveRuntimeConfig();
+    if (this.#imessage != null) this.#imessage.stop();
+    this.#imessage = null;
+    this.#status.setImessage({ enabled: false, connected: false, error: null });
+  }
+
+  setTelegramToken(token) {
+    const value = (token ?? "").trim();
+    this.#runtimeConfig.telegramEnabled = value !== "";
+    if (value !== "") this.#runtimeConfig.telegramBotToken = value;
+    else delete this.#runtimeConfig.telegramBotToken;
+    this.#saveRuntimeConfig();
+    this.#startTelegram();
+  }
+
+  startWeChat() {
+    this.#runtimeConfig.wechatEnabled = true;
+    this.#saveRuntimeConfig();
+    this.#startWechat();
+  }
+
+  logoutWeChat() {
+    this.#runtimeConfig.wechatEnabled = false;
+    this.#saveRuntimeConfig();
+    if (this.#wechat != null) this.#wechat.logout();
+    this.#wechat = null;
+  }
+
+  statusPayload() {
+    const config = this.effectiveConfig();
+    const snapshot = this.#status.toJSON();
+    return {
+      ...snapshot,
+      telegram: {
+        ...snapshot.telegram,
+        tokenConfigured: (config.telegramBotToken ?? "").trim() !== "",
+        enabled: config.telegramEnabled === true,
+      },
+      wechat: {
+        ...snapshot.wechat,
+        enabled: config.wechatEnabled === true,
+      },
+      imessage: {
+        ...snapshot.imessage,
+        enabled: config.imessageEnabled === true,
+      },
+    };
+  }
+
+  sendJson(res, payload, statusCode = 200) {
+    res.writeHead(statusCode, {
+      "content-type": "application/json; charset=utf-8",
+      "cache-control": "no-cache",
+    });
+    res.end(JSON.stringify(payload));
+  }
+
+  #registerRoutes() {
+    const webServer = this.#ctx.get("webServer");
+    if (webServer == null || typeof webServer.register !== "function") return;
+
+    webServer.register({
+      kind: "exact",
+      path: "/im/status",
+      handler: (req, res) => {
+        if (req.method !== "GET" && req.method !== "HEAD") {
+          res.writeHead(405);
+          res.end();
+          return;
+        }
+        this.#readLang(req);
+        this.sendJson(res, this.statusPayload());
+      },
+    });
+
+    webServer.register({
+      kind: "exact",
+      path: "/im/telegram",
+      handler: async (req, res) => {
+        if (req.method !== "POST") {
+          res.writeHead(405);
+          res.end();
+          return;
+        }
+        try {
+          this.#readLang(req);
+          const body = await readJson(req);
+          this.setTelegramToken(body.token ?? "");
+          this.sendJson(res, this.statusPayload());
+        } catch (error) {
+          this.sendJson(res, { error: error?.message ?? String(error) }, 400);
+        }
+      },
+    });
+
+    webServer.register({
+      kind: "exact",
+      path: "/im/wechat/start",
+      handler: (req, res) => {
+        if (req.method !== "POST") {
+          res.writeHead(405);
+          res.end();
+          return;
+        }
+        this.#readLang(req);
+        this.startWeChat();
+        this.sendJson(res, this.statusPayload());
+      },
+    });
+
+    webServer.register({
+      kind: "exact",
+      path: "/im/wechat/logout",
+      handler: (req, res) => {
+        if (req.method !== "POST") {
+          res.writeHead(405);
+          res.end();
+          return;
+        }
+        this.#readLang(req);
+        this.logoutWeChat();
+        this.sendJson(res, this.statusPayload());
+      },
+    });
+
+    webServer.register({
+      kind: "exact",
+      path: "/im/imessage/start",
+      handler: (req, res) => {
+        if (req.method !== "POST") {
+          res.writeHead(405);
+          res.end();
+          return;
+        }
+        this.#readLang(req);
+        this.startImessage();
+        this.sendJson(res, this.statusPayload());
+      },
+    });
+
+    webServer.register({
+      kind: "exact",
+      path: "/im/imessage/stop",
+      handler: (req, res) => {
+        if (req.method !== "POST") {
+          res.writeHead(405);
+          res.end();
+          return;
+        }
+        this.#readLang(req);
+        this.stopImessage();
+        this.sendJson(res, this.statusPayload());
+      },
+    });
+
+    console.log(`${LOG} IM status/config endpoints registered`);
+  }
+
+  dispose() {
+    if (this.#telegram != null) this.#telegram.stop();
+    if (this.#wechat != null) this.#wechat.stop();
+    if (this.#imessage != null) this.#imessage.stop();
+  }
+}
+
+/**
+ * Mount the IM bridge. Caller (index.js) has already awaited the loader, so
+ * `ctx.agents` has its loop factory. Returns the live controller or `null`.
+ */
+export function startIm(ctx, config, vision = null, usage = null) {
+  // One-time move of state left behind by the archived dsh-im package (telegram
+  // offset, wechat session/cursor, peers, runtime config, restart notice) into
+  // the plugin's own storage root. Must run before any channel reads state.
+  // State migration is performed by the package entrypoint before startup.
+  const controller = new ImController(ctx, config ?? {}, vision, usage);
+  if (!controller.available) {
+    console.warn(`${LOG} agent services unavailable in this profile; bridge disabled`);
+    return null;
+  }
+  controller.start();
+  ctx.on("dispose", () => controller.dispose());
+  return controller;
+}
