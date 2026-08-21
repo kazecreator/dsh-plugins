@@ -16,5 +16,9 @@
   ],
   "workspaces": [
     "packages/*"
-  ]
+  ],
+  "scripts": {
+    "test": "node test-plugins.mjs",
+    "check": "for f in packages/*/lib/*.js; do node --check $f; done"
+  }
 }

@@ -1,0 +1,5 @@
+- insert:
+    - id: dsh-memory
+      name: '@kazecreator/dsh-memory'
+      config:
+        memoryEnabled: false
