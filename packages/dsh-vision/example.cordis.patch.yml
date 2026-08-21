@@ -1,0 +1,8 @@
+- insert:
+    - id: dsh-vision
+      name: '@kazecreator/dsh-vision'
+      config:
+        visionEnabled: false
+        visionBaseUrl: ''
+        visionModel: ''
+        visionApiKeyEnv: ''

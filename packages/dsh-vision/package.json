@@ -1,0 +1,21 @@
+{
+  "name": "@kazecreator/dsh-vision",
+  "version": "0.1.0",
+  "description": "DeepSeek Harness vision bridge for text-only models",
+  "keywords": ["dsh", "dsh-plugin", "deepseek-harness", "vision", "vlm"],
+  "author": "kazeCreator",
+  "license": "MIT",
+  "type": "module",
+  "main": "lib/index.js",
+  "exports": { ".": "./lib/index.js", "./client": "./lib/client.js", "./package.json": "./package.json" },
+  "files": ["lib", "README.md", "LICENSE", "example.cordis.patch.yml"],
+  "dsh": { "client": { "platform": "web", "inject": ["@deepseek-ai/dsh-client-ui-primitives"] } },
+  "repository": { "type": "git", "url": "git+https://github.com/kazecreator/dsh-plugins.git", "directory": "packages/dsh-vision" },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "^4.0.1",
+    "@deepseek-ai/schemastery": "^3.18.1",
+    "@deepseek-ai/dsh-credentials": "^0.1.0-rc.6",
+    "@deepseek-ai/dsh-llm": "^0.1.0-rc.6",
+    "@deepseek-ai/dsh-client-ui-primitives": "^0.1.0-rc.6"
+  }
+}

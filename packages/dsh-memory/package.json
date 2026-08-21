@@ -1,0 +1,20 @@
+{
+  "name": "@kazecreator/dsh-memory",
+  "version": "0.1.0",
+  "description": "DeepSeek Harness cross-restart project memory plugin",
+  "keywords": ["dsh", "dsh-plugin", "deepseek-harness", "memory"],
+  "author": "kazeCreator",
+  "license": "MIT",
+  "type": "module",
+  "main": "lib/index.js",
+  "exports": { ".": "./lib/index.js", "./client": "./lib/client.js", "./package.json": "./package.json" },
+  "files": ["lib", "README.md", "LICENSE", "example.cordis.patch.yml"],
+  "dsh": { "client": { "platform": "web", "inject": ["@deepseek-ai/dsh-client-ui-primitives"] } },
+  "repository": { "type": "git", "url": "git+https://github.com/kazecreator/dsh-plugins.git", "directory": "packages/dsh-memory" },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "^4.0.1",
+    "@deepseek-ai/schemastery": "^3.18.1",
+    "@deepseek-ai/dsh-tools": "^0.1.0-rc.6",
+    "@deepseek-ai/dsh-client-ui-primitives": "^0.1.0-rc.6"
+  }
+}
