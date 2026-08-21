@@ -104,17 +104,45 @@ window.__ModuleLoader__.load({
       return sym + Number(n || 0).toFixed(2);
     }
 
-    function fmtTokens(n) {
-      var v = Number(n || 0);
-      if (v >= 1e6) return (v / 1e6).toFixed(2) + "M";
-      if (v >= 1e3) return (v / 1e3).toFixed(1) + "K";
-      return String(Math.round(v));
+    function fmtMillions(n) {
+      return (Number(n || 0) / 1e6).toFixed(2) + "M";
     }
 
     // Exact token count with thousands separators (matches the official page's
     // "150,476,544" instead of the abbreviated "150.48M").
     function fmtInt(n) {
       return Number(n || 0).toLocaleString("en-US");
+    }
+
+    function pad2(n) {
+      return String(n).padStart(2, "0");
+    }
+
+    function dayFromKey(value) {
+      var parts = String(value || "").split("-").map(Number);
+      return new Date(parts[0], parts[1] - 1, parts[2], 12, 0, 0, 0);
+    }
+
+    function dayKey(value) {
+      return value.getFullYear() + "-" + pad2(value.getMonth() + 1) + "-" + pad2(value.getDate());
+    }
+
+    function addDays(value, amount) {
+      var next = new Date(value.getTime());
+      next.setDate(next.getDate() + amount);
+      return next;
+    }
+
+    function sumUsage(days) {
+      var total = { cost: 0, inputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, outputTokens: 0 };
+      days.forEach(function (day) {
+        total.cost += Number(day.cost || 0);
+        total.inputTokens += Number(day.inputTokens || 0);
+        total.cacheReadTokens += Number(day.cacheReadTokens || 0);
+        total.cacheWriteTokens += Number(day.cacheWriteTokens || 0);
+        total.outputTokens += Number(day.outputTokens || 0);
+      });
+      return total;
     }
 
     // Consistent header for every feature panel: label + status on the left,
@@ -138,9 +166,17 @@ window.__ModuleLoader__.load({
       var selectedDate = selectedDateState[0];
       var setSelectedDate = selectedDateState[1];
 
-      var refreshBusyState = React.useState(false);
-      var refreshBusy = refreshBusyState[0];
-      var setRefreshBusy = refreshBusyState[1];
+      var usageRangeState = React.useState("day");
+      var usageRange = usageRangeState[0];
+      var setUsageRange = usageRangeState[1];
+
+      var heatmapRef = React.useRef(null);
+      var heatmapInitialized = React.useRef(false);
+      React.useEffect(function () {
+        if (heatmapInitialized.current || !data || !heatmapRef.current) return;
+        heatmapRef.current.scrollLeft = heatmapRef.current.scrollWidth;
+        heatmapInitialized.current = true;
+      }, [data]);
 
       var toggleBusyState = React.useState(false);
       var toggleBusy = toggleBusyState[0];
@@ -158,19 +194,6 @@ window.__ModuleLoader__.load({
       };
       var toggleUsage = function () { setUsage(true); };
       var disableUsage = function () { setUsage(false); };
-
-      var refreshBalance = function () {
-        setRefreshBusy(true);
-        return fetch(withLang("/settings-pro/usage/backfill"), {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({}),
-        })
-          .then(function (r) { return r.ok ? r.json() : r.json().then(function (x) { throw new Error(x && x.error ? x.error : "http " + r.status); }); })
-          .then(function () { reload(); })
-          .catch(function () { reload(); })
-          .finally(function () { setRefreshBusy(false); });
-      };
 
       if (!data) return React.createElement("div", { style: { color: T.textMuted, fontSize: 13 } }, zh("Loading…", "加载中…"));
 
@@ -204,8 +227,8 @@ window.__ModuleLoader__.load({
       }
       children.push(React.createElement("div", { key: "bal", style: cardStyle }, balChildren));
 
-      // Daily usage bar chart — last 15 days; click a bar for that day's detail.
-      // Usage is collected from local DSH session events.
+      // GitHub-style heatmap — one year of daily usage. Usage is
+      // collected from local DSH session events; click a square for its detail.
       var chartDays = (data.daily || []).map(function (o) {
         return {
           date: o.date,
@@ -218,59 +241,157 @@ window.__ModuleLoader__.load({
         };
       });
       chartDays.sort(function (a, b) { return a.date.localeCompare(b.date); });
-      chartDays = chartDays.slice(-15);
-      var todayDate = data.today;
-      var todayEntry = chartDays.find(function (d) { return d.date === todayDate; });
+      var usageByDate = {};
+      chartDays.forEach(function (d) { usageByDate[d.date] = d; });
+      var todayDate = data.today || dayKey(new Date());
+      var today = dayFromKey(todayDate);
+      var yearStart = addDays(today, -364);
+      var gridStart = addDays(yearStart, -yearStart.getDay());
+      var gridEnd = addDays(today, 6 - today.getDay());
+      var gridDates = [];
+      var cursor = gridStart;
+      while (true) {
+        gridDates.push(cursor);
+        if (dayKey(cursor) === dayKey(gridEnd)) break;
+        cursor = addDays(cursor, 1);
+      }
+      var gridStartKey = dayKey(gridStart);
+      var visibleDays = chartDays.filter(function (d) { return d.date >= gridStartKey && d.date <= todayDate; });
+      var maxCost = visibleDays.reduce(function (max, d) { return Math.max(max, Number(d.cost || 0)); }, 0);
+      var todayEntry = usageByDate[todayDate];
       var selected = chartDays.find(function (d) { return d.date === selectedDate; });
+
+      var rangeOptions = [
+        { id: "day", en: "Day", zh: "天" },
+        { id: "week", en: "Week", zh: "周" },
+        { id: "month", en: "Month", zh: "月" },
+        { id: "total", en: "Total", zh: "总计" },
+      ];
+      var weekStart = addDays(today, -((today.getDay() + 6) % 7));
+      var monthStart = new Date(today.getFullYear(), today.getMonth(), 1, 12, 0, 0, 0);
+      var rangeStart = usageRange === "week" ? dayKey(weekStart)
+        : usageRange === "month" ? dayKey(monthStart)
+          : usageRange === "total" ? (chartDays[0]?.date || todayDate)
+            : todayDate;
+      var rangeDays = usageRange === "total"
+        ? chartDays
+        : chartDays.filter(function (d) { return d.date >= rangeStart && d.date <= todayDate; });
+      var rangeUsage = sumUsage(rangeDays);
+      var rangeInput = rangeUsage.inputTokens + rangeUsage.cacheReadTokens + rangeUsage.cacheWriteTokens;
+      var rangeTokens = rangeInput + rangeUsage.outputTokens;
+      var summaryChildren = [
+        React.createElement("div", { key: "title", style: { color: T.text, fontSize: 13, fontWeight: 600, marginBottom: 10 } }, zh("Total usage", "总用量")),
+        React.createElement("div", { key: "ranges", style: { display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 14 } },
+          rangeOptions.map(function (option) {
+            var active = option.id === usageRange;
+            return React.createElement("button", {
+              key: option.id,
+              type: "button",
+              "aria-pressed": active,
+              onClick: function () { setUsageRange(option.id); },
+              style: {
+                border: "1px solid " + (active ? "var(--dsw-alias-state-business-primary)" : T.borderL2),
+                borderRadius: 6,
+                padding: "4px 10px",
+                background: active ? "var(--dsw-alias-state-business-primary)" : "transparent",
+                color: active ? "#fff" : T.textMuted,
+                cursor: "pointer",
+                font: "inherit",
+                fontSize: 12,
+                lineHeight: "16px",
+              },
+            }, zh(option.en, option.zh));
+          })),
+      ];
+      summaryChildren.push(Row({ key: "cost", label: zh("Estimated cost", "估算成本"), value: fmtMoney(rangeUsage.cost, currency) }));
+      summaryChildren.push(Row({ key: "tokens", label: zh("Total tokens", "总 tokens"), value: fmtMillions(rangeTokens) }));
+      summaryChildren.push(Row({ key: "input", label: zh("Input", "输入"), value: fmtMillions(rangeInput) }));
+      summaryChildren.push(Row({ key: "output", label: zh("Output", "输出"), value: fmtMillions(rangeUsage.outputTokens) }));
+      summaryChildren.push(Row({ key: "days", label: zh("Days with usage", "有用量天数"), value: fmtInt(rangeDays.length) }));
+      children.push(React.createElement("div", { key: "summary", style: cardStyle }, summaryChildren));
 
       var chartChildren = [
         React.createElement("div", { key: "head", style: { display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 } },
           React.createElement("div", { style: { color: T.text, fontSize: 13, fontWeight: 600 } },
-            zh("Usage", "用量") + " · " + zh("last 15 days", "最近 15 天") + (data.backfilled ? " · " + zh("recorded", "已记录") : ""))),
+            zh("Daily usage", "每日用量") + (data.backfilled ? " · " + zh("recorded", "已记录") : ""))),
       ];
 
-      if (chartDays.length === 0) {
-        chartChildren.push(React.createElement("div", { key: "empty", style: { color: T.textMuted, fontSize: 12, lineHeight: "18px" } },
-          zh("No local DeepSeek usage yet.", "暂无本地 DeepSeek 用量记录。")));
-      } else {
-        var maxCost = 0;
-        chartDays.forEach(function (d) { if (d.cost > maxCost) maxCost = d.cost; });
-        if (maxCost <= 0) maxCost = 1;
-        var barHeight = 110;
-        var bars = chartDays.map(function (d) {
-          var h = Math.max(2, Math.round(d.cost / maxCost * barHeight));
-          var dayNum = String(Number(d.date.slice(-2)));
-          var isToday = d.date === todayDate;
-          var isSel = d.date === selectedDate;
-          var tokens = d.inputTokens + d.cacheReadTokens + d.cacheWriteTokens + d.outputTokens;
-          return React.createElement("div", {
-            key: d.date,
-            title: d.date + " · " + fmtMoney(d.cost, currency) + " · " + fmtInt(tokens) + " tokens",
-            onClick: function () { setSelectedDate(isSel ? "" : d.date); },
-            style: { display: "flex", flexDirection: "column", alignItems: "center", flex: "1 0 16px", minWidth: 16, cursor: "pointer" },
-          },
-            React.createElement("div", {
-              style: {
-                width: "70%", maxWidth: 22, height: h,
-                background: isSel ? "var(--dsw-alias-state-business-primary)" : (isToday ? "var(--dsw-alias-state-warn-primary)" : "var(--dsw-alias-button-primary-fill)"),
-                borderRadius: "3px 3px 0 0", opacity: isSel ? 1 : 0.92,
-              },
-            }),
-            React.createElement("div", { style: { fontSize: 9, color: (isToday || isSel) ? T.text : T.textTertiary, marginTop: 4, lineHeight: "12px" } }, dayNum));
-        });
-        var totalCost = chartDays.reduce(function (s, d) { return s + d.cost; }, 0);
-        chartChildren.push(React.createElement("div", {
-          key: "bars",
-          style: { display: "flex", alignItems: "flex-end", gap: 3, height: barHeight + 18, paddingTop: 4, overflowX: "auto" },
-        }, bars));
-        chartChildren.push(React.createElement("div", { key: "tot", style: { marginTop: 10 } },
-          Row({ label: zh("15-day cost", "15 天成本"), value: fmtMoney(totalCost, currency) }),
-          Row({ label: zh("Today cost", "今日成本"), value: todayEntry ? fmtMoney(todayEntry.cost, currency) : "—" }),
-          Row({ label: zh("Today tokens", "今日 tokens"), value: todayEntry ? fmtInt(todayEntry.inputTokens + todayEntry.cacheReadTokens + todayEntry.outputTokens) : "—" })));
+      var heatColors = ["#ebedf0", "#9be9a8", "#40c463", "#30a14e", "#216e39"];
+      var heatLevel = function (entry) {
+        if (!entry || Number(entry.cost || 0) <= 0) return 0;
+        if (maxCost <= 0) return 1;
+        var ratio = Number(entry.cost || 0) / maxCost;
+        return ratio >= 0.8 ? 4 : ratio >= 0.55 ? 3 : ratio >= 0.3 ? 2 : 1;
+      };
+      var weekdayLabels = [zh("Sun", "日"), "", zh("Tue", "二"), "", zh("Thu", "四"), "", zh("Sat", "六")];
+      var monthLabels = [];
+      var weeks = [];
+      var heatCellSize = 14;
+      var heatGap = 4;
+      var weekCount = Math.ceil(gridDates.length / 7);
+      var heatGridWidth = weekCount * (heatCellSize + heatGap) - heatGap;
+      for (var week = 0; week < weekCount; week += 1) {
+        var weekStart = gridDates[week * 7];
+        var previousWeekStart = week > 0 ? gridDates[(week - 1) * 7] : null;
+        var monthLabel = week === 0 || weekStart.getMonth() !== previousWeekStart.getMonth()
+          ? zh(["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"][weekStart.getMonth()], ["1月", "2月", "3月", "4月", "5月", "6月", "7月", "8月", "9月", "10月", "11月", "12月"][weekStart.getMonth()])
+          : "";
+        monthLabels.push(React.createElement("div", {
+          key: "month" + week,
+          style: { width: heatCellSize, minWidth: heatCellSize, color: T.textTertiary, fontSize: 10, lineHeight: "16px", whiteSpace: "nowrap", overflow: "visible" },
+        }, monthLabel));
+
+        var cells = [];
+        for (var weekday = 0; weekday < 7; weekday += 1) {
+          var dateValue = gridDates[week * 7 + weekday];
+          var date = dateValue ? dayKey(dateValue) : "";
+          var entry = date ? usageByDate[date] : null;
+          var isFuture = date > todayDate;
+          var isSelected = date === selectedDate;
+          var clickable = !isFuture && Boolean(entry);
+          var tokens = entry ? entry.inputTokens + entry.cacheReadTokens + entry.cacheWriteTokens + entry.outputTokens : 0;
+          var label = entry
+            ? date + " · " + fmtMoney(entry.cost, currency) + " · " + fmtMillions(tokens) + " tokens"
+            : date + " · " + zh("No usage", "暂无用量");
+          cells.push(React.createElement("div", {
+            key: date || "future" + weekday,
+            title: isFuture ? "" : label,
+            onClick: clickable ? function (key) { return function () { setSelectedDate(selectedDate === key ? "" : key); }; }(date) : undefined,
+            style: {
+              width: heatCellSize, height: heatCellSize, minWidth: heatCellSize, borderRadius: 2,
+              background: isFuture ? "transparent" : heatColors[heatLevel(entry)],
+              boxShadow: isSelected ? "0 0 0 2px var(--dsw-alias-state-business-primary)" : "none",
+              cursor: clickable ? "pointer" : "default",
+              opacity: isFuture ? 0 : 1,
+            },
+          }));
+        }
+        weeks.push(React.createElement("div", { key: "week" + week, style: { display: "flex", flexDirection: "column", gap: heatGap, minWidth: heatCellSize } }, cells));
       }
+      var totalCost = visibleDays.reduce(function (sum, d) { return sum + Number(d.cost || 0); }, 0);
+      chartChildren.push(React.createElement("div", { key: "heatmap", style: { display: "flex", alignItems: "flex-start", gap: heatGap, padding: "2px 2px 4px" } },
+        React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: heatGap, width: 27, minWidth: 27, paddingTop: 16 + heatGap, background: "var(--dsw-alias-bg-module-platform)", zIndex: 2 } },
+          weekdayLabels.map(function (label, index) { return React.createElement("div", { key: "weekday" + index, style: { height: heatCellSize, fontSize: 9, lineHeight: heatCellSize + "px", color: T.textTertiary } }, label); })),
+        React.createElement("div", { ref: heatmapRef, style: { flex: "1 1 auto", minWidth: 0, overflowX: "auto" } },
+          React.createElement("div", { style: { minWidth: heatGridWidth } },
+            React.createElement("div", { style: { display: "flex", gap: heatGap, minWidth: heatGridWidth } }, monthLabels),
+            React.createElement("div", { style: { display: "flex", gap: heatGap, minWidth: heatGridWidth } }, weeks)))));
+      chartChildren.push(React.createElement("div", { key: "legend", style: { display: "flex", justifyContent: "flex-end", alignItems: "center", gap: 4, color: T.textTertiary, fontSize: 10, marginTop: 8 } },
+        React.createElement("span", null, zh("Less", "少")),
+        heatColors.map(function (color, index) { return React.createElement("span", { key: "legend" + index, style: { width: heatCellSize, height: heatCellSize, borderRadius: 2, background: color } }); }),
+        React.createElement("span", null, zh("More", "多"))));
+      if (chartDays.length === 0) {
+        chartChildren.push(React.createElement("div", { key: "empty", style: { color: T.textMuted, fontSize: 12, lineHeight: "18px", marginTop: 8 } },
+          zh("No local DeepSeek usage yet.", "暂无本地 DeepSeek 用量记录。")));
+      }
+      chartChildren.push(React.createElement("div", { key: "tot", style: { marginTop: 10 } },
+        Row({ label: zh("Last year cost", "过去一年成本"), value: fmtMoney(totalCost, currency) }),
+        Row({ label: zh("Today cost", "今日成本"), value: todayEntry ? fmtMoney(todayEntry.cost, currency) : "—" }),
+        Row({ label: zh("Today tokens", "今日 tokens"), value: todayEntry ? fmtMillions(todayEntry.inputTokens + todayEntry.cacheReadTokens + todayEntry.cacheWriteTokens + todayEntry.outputTokens) : "—" }),
+        Row({ label: zh("Days with usage", "有用量天数"), value: fmtInt(visibleDays.length) })));
       children.push(React.createElement("div", { key: "chart", style: cardStyle }, chartChildren));
 
-      // Detail for the selected day (click a bar to select).
+      // Detail for the selected day (click a square to select).
       if (selected) {
         var hit = selected.cacheReadTokens;
         var miss = selected.inputTokens;
@@ -279,12 +400,12 @@ window.__ModuleLoader__.load({
         var hitPct = totalInput > 0 ? (hit / totalInput * 100).toFixed(1) + "%" : "—";
         var detChildren = [React.createElement("div", { key: "t", style: titleStyle }, zh("Detail", "明细") + " · " + selected.date)];
         detChildren.push(Row({ key: "c", label: zh("Cost", "消耗"), value: fmtMoney(selected.cost, currency) }));
-        detChildren.push(Row({ key: "in", label: zh("Input", "输入"), value: fmtInt(totalInput) }));
-        detChildren.push(Row({ key: "hit", label: zh("Cache hit", "输入（缓存命中）"), value: fmtInt(hit) + " · " + hitPct }));
-        detChildren.push(Row({ key: "miss", label: zh("Cache miss", "输入（缓存未命中）"), value: fmtInt(miss) }));
-        detChildren.push(Row({ key: "write", label: zh("Cache write", "缓存写入"), value: fmtInt(write) }));
-        detChildren.push(Row({ key: "out", label: zh("Output", "输出"), value: fmtInt(selected.outputTokens) }));
-        detChildren.push(Row({ key: "tot", label: zh("Total tokens", "总 tokens"), value: fmtInt(totalInput + selected.outputTokens) }));
+        detChildren.push(Row({ key: "in", label: zh("Input", "输入"), value: fmtMillions(totalInput) }));
+        detChildren.push(Row({ key: "hit", label: zh("Cache hit", "输入（缓存命中）"), value: fmtMillions(hit) + " · " + hitPct }));
+        detChildren.push(Row({ key: "miss", label: zh("Cache miss", "输入（缓存未命中）"), value: fmtMillions(miss) }));
+        detChildren.push(Row({ key: "write", label: zh("Cache write", "缓存写入"), value: fmtMillions(write) }));
+        detChildren.push(Row({ key: "out", label: zh("Output", "输出"), value: fmtMillions(selected.outputTokens) }));
+        detChildren.push(Row({ key: "tot", label: zh("Total tokens", "总 tokens"), value: fmtMillions(totalInput + selected.outputTokens) }));
         var modelKeys = selected.models ? Object.keys(selected.models) : [];
         if (modelKeys.length > 0) {
           detChildren.push(React.createElement("div", { key: "mh", style: { color: T.textTertiary, fontSize: 11, fontWeight: 600, marginTop: 6, marginBottom: 4 } }, zh("By model", "按模型")));
@@ -296,22 +417,10 @@ window.__ModuleLoader__.load({
               if (!b) return;
               mTokens += (b.inputTokens || 0) + (b.cacheReadTokens || 0) + (b.cacheWriteTokens || 0) + (b.outputTokens || 0);
             });
-            detChildren.push(Row({ key: "m" + m, label: m, value: fmtTokens(mTokens) }));
+            detChildren.push(Row({ key: "m" + m, label: m, value: fmtMillions(mTokens) }));
           });
         }
         children.push(React.createElement("div", { key: "detail", style: cardStyle }, detChildren));
-      }
-
-      {
-        var sourceChildren = [React.createElement("div", { key: "t", style: titleStyle }, zh("Usage source", "用量来源"))];
-        sourceChildren.push(React.createElement("div", { key: "copy", style: { color: T.textTertiary, fontSize: 12, lineHeight: "18px", marginBottom: 8 } },
-          zh("Token usage is read from this DSH instance's DeepSeek session events. Costs are estimates from the local price table; balance uses DEEPSEEK_API_KEY.", "Token 用量读取自当前 DSH 实例的 DeepSeek 会话事件。成本按本地价格表估算，余额使用 DEEPSEEK_API_KEY 查询。")));
-        sourceChildren.push(React.createElement("div", { key: "action", style: { display: "flex", gap: 8, alignItems: "center" } },
-          React.createElement(P.Button, { variant: "outline", size: "sm", disabled: refreshBusy, onClick: refreshBalance },
-            refreshBusy ? zh("Refreshing…", "刷新中…") : zh("Refresh balance", "刷新余额")),
-          React.createElement("span", { style: { color: T.textTertiary, fontSize: 12 } },
-            zh("No platform login is required.", "无需平台网页登录。"))));
-        children.push(React.createElement("div", { key: "source", style: cardStyle }, sourceChildren));
       }
 
       return React.createElement("div", { style: { maxWidth: 720 } }, children);
