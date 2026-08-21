@@ -7,7 +7,7 @@ The former `@kazecreator/dsh-settings-pro` package bundled unrelated features in
 | Package | Capability |
 | --- | --- |
 | [`@kazecreator/dsh-im`](./packages/dsh-im) | Telegram, WeChat, and iMessage agent bridge |
-| [`@kazecreator/dsh-usage`](./packages/dsh-usage) | DeepSeek balance and official billed usage |
+| [`@kazecreator/dsh-usage`](./packages/dsh-usage) | DeepSeek API balance and local token usage |
 | [`@kazecreator/dsh-memory`](./packages/dsh-memory) | Cross-restart project memory and tools |
 | [`@kazecreator/dsh-pets`](./packages/dsh-pets) | Desktop pet, catalog, and activity monitor |
 | [`@kazecreator/dsh-vision`](./packages/dsh-vision) | Image-to-text bridge for text-only models |

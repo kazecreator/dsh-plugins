@@ -1,0 +1,6 @@
+- insert:
+    - id: dsh-usage
+      name: '@kazecreator/dsh-usage'
+      config:
+        usageEnabled: false
+        providerId: deepseek-official
