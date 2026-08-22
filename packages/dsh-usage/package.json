@@ -1,6 +1,6 @@
 {
   "name": "@kazecreator/dsh-usage",
-  "version": "0.1.8",
+  "version": "0.1.9",
   "description": "DeepSeek Harness API balance and local token usage plugin",
   "keywords": ["dsh", "dsh-plugin", "deepseek-harness", "usage", "billing"],
   "author": "kazeCreator",

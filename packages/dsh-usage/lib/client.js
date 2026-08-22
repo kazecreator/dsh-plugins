@@ -328,6 +328,7 @@ window.__ModuleLoader__.load({
       var weeks = [];
       var heatCellSize = 14;
       var heatGap = 4;
+      var heatEdge = 8;
       var weekCount = Math.ceil(gridDates.length / 7);
       var heatGridWidth = weekCount * (heatCellSize + heatGap) - heatGap;
       for (var week = 0; week < weekCount; week += 1) {
@@ -369,11 +370,11 @@ window.__ModuleLoader__.load({
         weeks.push(React.createElement("div", { key: "week" + week, style: { display: "flex", flexDirection: "column", gap: heatGap, minWidth: heatCellSize } }, cells));
       }
       var totalCost = visibleDays.reduce(function (sum, d) { return sum + Number(d.cost || 0); }, 0);
-      chartChildren.push(React.createElement("div", { key: "heatmap", style: { display: "flex", alignItems: "flex-start", gap: heatGap, padding: "2px 2px 4px" } },
+      chartChildren.push(React.createElement("div", { key: "heatmap", style: { display: "flex", alignItems: "flex-start", gap: heatGap, padding: "2px 8px 10px 2px" } },
         React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: heatGap, width: 27, minWidth: 27, paddingTop: 16 + heatGap, background: "var(--dsw-alias-bg-module-platform)", zIndex: 2 } },
           weekdayLabels.map(function (label, index) { return React.createElement("div", { key: "weekday" + index, style: { height: heatCellSize, fontSize: 9, lineHeight: heatCellSize + "px", color: T.textTertiary } }, label); })),
-        React.createElement("div", { ref: heatmapRef, style: { flex: "1 1 auto", minWidth: 0, overflowX: "auto" } },
-          React.createElement("div", { style: { minWidth: heatGridWidth } },
+        React.createElement("div", { ref: heatmapRef, style: { flex: "1 1 0", minWidth: 0, overflowX: "auto", overflowY: "hidden", paddingBottom: heatEdge, boxSizing: "border-box", scrollbarGutter: "stable" } },
+          React.createElement("div", { style: { minWidth: heatGridWidth, paddingRight: heatEdge, paddingBottom: heatEdge } },
             React.createElement("div", { style: { display: "flex", gap: heatGap, minWidth: heatGridWidth } }, monthLabels),
             React.createElement("div", { style: { display: "flex", gap: heatGap, minWidth: heatGridWidth } }, weeks)))));
       chartChildren.push(React.createElement("div", { key: "legend", style: { display: "flex", justifyContent: "flex-end", alignItems: "center", gap: 4, color: T.textTertiary, fontSize: 10, marginTop: 8 } },
